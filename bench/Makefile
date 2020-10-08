@@ -7,7 +7,7 @@ all: bench
 
 .PHONY: bench
 bench: extern
-	$(DC) $(DFLAGS) -of bench bench.d extern/http_parser.o extern/picohttpparser.o -J .
+	$(DC) $(DFLAGS) -of bench bench.d ../source/httparsed/message.d ../source/httparsed/intrinsics.d extern/http_parser.o extern/picohttpparser.o -J .
 
 .PHONY: extern
 extern:

@@ -1,4 +1,4 @@
-CFLAGS += -Wall -Wextra -Werror -O3
+CFLAGS += -Wall -Wextra -Werror -O3 -march=native
 CC?=gcc
 
 all: picohttpparser.o http_parser.o
