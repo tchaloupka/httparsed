@@ -1,5 +1,7 @@
 module httparsed.message;
 
+import httparsed.intrinsics;
+import std.algorithm : among;
 import std.format : format;
 
 nothrow @safe @nogc:
@@ -34,102 +36,109 @@ struct MsgParser(Parser)
         this.msg = Parser(args);
     }
 
+    auto parseRequest(T)(T buffer, ref uint lastPos)
+        if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
+    {
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(buffer.representation, lastPos);
+        else return parse!parseRequestLine(buffer, lastPos);
+    }
+
     auto parseRequest(T)(T buffer)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
-        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(buffer.representation);
-        else return parse!parseRequestLine(buffer);
+        uint lastPos;
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(buffer.representation, lastPos);
+        else return parse!parseRequestLine(buffer, lastPos);
+    }
+
+    auto parseResponse(T)(T buffer, ref uint lastPos)
+        if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
+    {
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(buffer.representation, lastPos);
+        else return parse!parseStatusLine(buffer, lastPos);
     }
 
     auto parseResponse(T)(T buffer)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
-        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(buffer.representation);
-        else return parse!parseStatusLine(buffer);
+        uint lastPos;
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(buffer.representation, lastPos);
+        else return parse!parseStatusLine(buffer, lastPos);
     }
 
     ref Parser msg() return { return m_msg; }
 
 private:
 
-    int lastPos;
-    bool hasHeader;
     Parser m_msg;
 
-    auto parse(alias pred)(const(ubyte)[] buffer)
+    int parse(alias pred)(const(ubyte)[] buffer, ref uint lastPos)
     {
         assert(buffer.length >= lastPos);
         immutable l = buffer.length;
 
-        if (!lastPos)
+        if (_expect(!lastPos, true))
         {
-            if (!buffer.length) return err(Error.partial);
+            if (_expect(!buffer.length, false)) return err(Error.partial);
 
             // skip first empty line (some clients add CRLF after POST content)
-            if (buffer[0] == '\r')
+            if (_expect(buffer[0] == '\r', false))
             {
-                if (buffer.length == 1) return err(Error.partial);
-                if (buffer[1] != '\n') return err(Error.newLine);
+                if (_expect(buffer.length == 1, false)) return err(Error.partial);
+                if (_expect(buffer[1] != '\n', false)) return err(Error.newLine);
                 lastPos += 2;
-                buffer = buffer[2..$];
+                buffer = buffer[lastPos..$];
             }
-            else if (buffer[0] == '\n')
-            {
-                lastPos++;
-                buffer = buffer[1..$];
-            }
+            else if (_expect(buffer[0] == '\n', false))
+                buffer = buffer[++lastPos..$];
 
-            auto res = pred(buffer);
-            if (res < 0) return res;
+            immutable res = pred(buffer);
+            if (_expect(res < 0, false)) return res;
 
             lastPos = cast(int)(l - buffer.length); // store index of last parsed line
         }
         else buffer = buffer[lastPos..$]; // skip already parsed lines
 
-        auto hdrRes = parseHeaders(buffer);
+        immutable hdrRes = parseHeaders(buffer);
         lastPos = cast(int)(l - buffer.length); // store index of last parsed line
 
-        if (hdrRes < 0) return hdrRes;
+        if (_expect(hdrRes < 0, false)) return hdrRes;
         return lastPos; // finished
     }
 
-    auto parseHeaders(ref const(ubyte)[] buffer)
+    int parseHeaders(ref const(ubyte)[] buffer)
     {
         static immutable bool[256] validCharsMap = buildHeaderNameValidCharMap();
 
-        enum checkEOF = q{
-            assert(i == 0);
-            if (i == buffer.length) return err(Error.partial);
-            if (buffer[i] == '\r')
-            {
-                if (i+1 == buffer.length) return err(Error.partial);
-                else if (buffer[i+1] != '\n') return err(Error.newLine);
-                else
-                {
-                    buffer = buffer[i+2..$];
-                    return 0;
-                }
-            }
-            else if (buffer[i] == '\n')
-            {
-                buffer = buffer[i..$];
-                return 0;
-            }
-        };
-
+        bool hasHeader;
         size_t start, i;
         const(ubyte)[] name, value;
         while (true)
         {
-            mixin(checkEOF);
-            if (!hasHeader || (buffer[i] != ' ' && buffer[i] != '\t'))
+            assert(i == 0);
+            if (_expect(buffer.length == 0, false)) return err(Error.partial);
+            if (buffer[0] == '\r')
+            {
+                if (_expect(buffer.length == 1, false)) return err(Error.partial);
+                if (_expect(buffer[1] != '\n', false)) return err(Error.newLine);
+
+                buffer = buffer[2..$];
+                return 0;
+            }
+            if (_expect(buffer[0] == '\n', false))
+            {
+                buffer = buffer[1..$];
+                return 0;
+            }
+
+            if (!hasHeader || !buffer[i].among(' ', '\t'))
             {
                 // read header name
                 while (true)
                 {
                     if (i+1 == buffer.length) return err(Error.partial);
-                    else if (buffer[i] == ':') break;
-                    else if (!validCharsMap[buffer[i]]) return err(Error.headerName);
+                    if (buffer[i] == ':') break;
+                    if (!validCharsMap[buffer[i]]) return err(Error.headerName);
                     ++i;
                 }
                 if (start == i) return err(Error.noHeaderName);
@@ -138,7 +147,7 @@ private:
                 while (true) // skip over SP and tabs
                 {
                     if (i+1 >= buffer.length) return err(Error.partial); // not enough data (>= because of increment above)
-                    if (buffer[i] != ' ' && buffer[i] != '\t') break;
+                    if (!buffer[i].among(' ', '\t')) break;
                     start = i = i+1;
                 }
             }
@@ -170,7 +179,7 @@ private:
     {
         size_t start, i;
         mixin(readToken!false);
-        if (start == i) return err(Error.noMethod);
+        if (_expect(start == i, false)) return err(Error.noMethod);
         static if (__traits(hasMember, m_msg, "onMethod"))
         {
             static if (is(typeof(m_msg.onMethod("")) == void))
@@ -183,7 +192,7 @@ private:
         start = i = i+1; // skip SP
 
         mixin(readToken!true);
-        if (start == i) return err(Error.noUri);
+        if (_expect(start == i, false)) return err(Error.noUri);
         static if (__traits(hasMember, m_msg, "onUri"))
         {
             static if (is(typeof(m_msg.onUri("")) == void))
@@ -196,7 +205,7 @@ private:
         start = i = i+1; // skip SP
 
         mixin(readTokenToEol!(q{
-            if (start == i) return err(Error.noVersion);
+            if (_expect(start == i, false)) return err(Error.noVersion);
             static if (__traits(hasMember, m_msg, "onVersion"))
             {
                 static if (is(typeof(m_msg.onVersion("")) == void))
@@ -217,7 +226,7 @@ private:
     {
         size_t start, i;
         mixin(readToken!false);
-        if (start == i) return err(Error.noVersion);
+        if (_expect(start == i, false)) return err(Error.noVersion);
         static if (__traits(hasMember, m_msg, "onVersion"))
         {
             static if (is(typeof(m_msg.onVersion("")) == void))
@@ -229,7 +238,7 @@ private:
         }
         start = i = i+1; // skip SP
 
-        if (i+3 >= buffer.length) return err(Error.partial); // not enough data - we want at least [:digit:][:digit:][:digit:]<other char> to try to parse
+        if (_expect(i+3 >= buffer.length, false)) return err(Error.partial); // not enough data - we want at least [:digit:][:digit:][:digit:]<other char> to try to parse
         int code;
         foreach (j, m; [100, 10, 1])
         {
@@ -277,9 +286,9 @@ private:
         enum readToken = format!(q{
             while (true)
             {
-                if (i == buffer.length) return err(Error.partial);
-                else if (buffer[i] == ' ') break;
-                else if (!isPrintableAscii!%s(buffer[i])) return err(Error.token);
+                if (_expect(i == buffer.length, false)) return err(Error.partial);
+                if (buffer[i] == ' ') break;
+                if (_expect(!isPrintableAscii!%s(buffer[i]), false)) return err(Error.token);
                 ++i;
             }
         })(extended ? "true" : "false");
@@ -296,7 +305,7 @@ private:
         enum readTokenToEol = format!q{
             while (true)
             {
-                if (i == buffer.length) return err(Error.partial);
+                if (_expect(i == buffer.length, false)) return err(Error.partial);
                 if (!isPrintableAscii!%s(buffer[i])%s)
                 {
                     if (buffer[i] == '\r')
@@ -307,13 +316,13 @@ private:
                         i+=2;
                         break;
                     }
-                    else if (buffer[i] == '\n')
+                    if (buffer[i] == '\n')
                     {
                         %s
                         ++i;
                         break;
                     }
-                    else return err(Error.token);
+                    return err(Error.token);
                 }
                 ++i;
             }
@@ -325,11 +334,11 @@ private:
     }
 }
 
-private int err(Error e) { return -(cast(int)e); }
+private int err(Error e) { pragma(inline, true); return -(cast(int)e); }
 
 private bool isPrintableAscii(bool extended)(ubyte c) pure
 {
-    pragma(inline);
+    pragma(inline, true);
     static if (extended) return c >= 0x80 || cast(ubyte)(c - 0x20u) < 0x5fu;
     else return cast(ubyte)(c - 0x20u) < 0x5fu;
 }
@@ -528,6 +537,11 @@ unittest
         assert(req.headers[7] == Header("Accept-Charset", "ISO-8859-1,utf-8;q=0.7,*;q=0.3"));
         assert(req.headers[8] == Header("Cookie", "name=wookie"));
     }
+
+    // newline
+    {
+        auto req = parse("GET / HTTP/1.0\nfoo: a\n\n");
+    }
 }
 
 @("Response")
@@ -664,7 +678,8 @@ unittest
 {
     string req = "GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConnection: keep-alive\r\nCache-Control: max-age=0\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.56 Safari/537.17\r\nAccept-Encoding: gzip,deflate,sdch\r\nAccept-Language: en-US,en;q=0.8\r\nAccept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.3\r\nCookie: name=wookie\r\n\r\n";
     auto parser = initParser!Msg();
-    auto res = parser.parseRequest(req[0.."GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConn".length]);
+    uint parsed;
+    auto res = parser.parseRequest(req[0.."GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConn".length], parsed);
     assert(res == -Error.partial);
     assert(parser.msg.method == "GET");
     assert(parser.msg.uri == "/cookies");
@@ -672,7 +687,8 @@ unittest
     assert(parser.msg.headers.length == 1);
     assert(parser.msg.headers[0] == Header("Host", "127.0.0.1:8090"));
 
-    res = parser.parseRequest(req);
+    res = parser.parseRequest(req, parsed);
+    assert(res == req.length);
     assert(parser.msg.method == "GET");
     assert(parser.msg.uri == "/cookies");
     assert(parser.msg.ver == "HTTP/1.1");
