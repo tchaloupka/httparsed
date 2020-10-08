@@ -21,19 +21,19 @@ enum Error : int
 }
 
 /// Helper function to initialize message parser
-auto initParser(Parser, Args...)(Args args) { return MsgParser!Parser(args); }
+auto initParser(MSG, Args...)(Args args) { return MsgParser!MSG(args); }
 
 /++
     HTTP/RTSP message parser.
 +/
-struct MsgParser(Parser)
+struct MsgParser(MSG)
 {
     import std.traits : ForeachType, isArray, Unqual;
     import std.string : representation;
 
     this(Args...)(Args args)
     {
-        this.msg = Parser(args);
+        this.msg = MSG(args);
     }
 
     auto parseRequest(T)(T buffer, ref uint lastPos)
@@ -66,11 +66,11 @@ struct MsgParser(Parser)
         else return parse!parseStatusLine(buffer, lastPos);
     }
 
-    ref Parser msg() return { return m_msg; }
+    ref MSG msg() return { return m_msg; }
 
 private:
 
-    Parser m_msg;
+    MSG m_msg;
 
     int parse(alias pred)(const(ubyte)[] buffer, ref uint lastPos)
     {
