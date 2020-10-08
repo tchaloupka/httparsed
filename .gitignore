@@ -1,3 +1,6 @@
 .dub
 *-test-*
 *.a
+*.o
+*.exe
+*.so
