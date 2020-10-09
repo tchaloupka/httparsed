@@ -1,3 +1,4 @@
+import std.algorithm;
 import std.conv;
 import std.datetime.stopwatch;
 import std.exception;
@@ -7,6 +8,7 @@ import std.stdio;
 import httparsed.message;
 import http_parser;
 import picohttpparser;
+import llhttp;
 
 immutable string requests = import("requests.txt");
 enum REQNUM = 275; // number of requests in the requests.txt
@@ -21,8 +23,7 @@ void main()
         enum bytes = requests.length * LOOPS;
         enum totalReq = REQNUM * LOOPS;
         writeln(
-            name, ":",
-            ' '.repeat(20-name.length).text,
+            name,
             cast(double)nsecs/totalReq, " ns/req, ",
             cast(double)bytes/secs/1024/1024, " MB/s"
         );
@@ -32,13 +33,19 @@ void main()
         testHttparsed!Msg,
         testHttparsed!NoopMsg,
         testPicoHttpParser,
-        testHttpParser
-    )(LOOPS);
+        testHttpParser,
+        testLLHTTP
+    )(LOOPS)[].zip(
+        ["httparsed", "httparsed (noop)", "picohttp", "http_parser", "llhttp"]
+    )
+    .array.sort!((a,b) => a[0] < b[0]);
 
-    writeRes("httparsed", res[0]);
-    writeRes("httparsed - noop", res[1]);
-    writeRes("picohttp", res[2]);
-    writeRes("http_parser", res[3]);
+    immutable maxlen = res.maxElement!(a => a[1].length)[1].length;
+    foreach (r; res)
+        writeRes(
+            r[1] ~ ": " ~ ' '.repeat(maxlen - r[1].length).text,
+            r[0]
+        );
 }
 
 void testHttparsed(M)()
@@ -106,6 +113,28 @@ void testHttpParser()
     http_parser_init(&parser, http_parser_type.HTTP_REQUEST);
     immutable res = http_parser_execute(&parser, &settings, &data[0], data.length);
     enforce(res == requests.length, "Unexpected response: " ~ res.to!string);
+    enforce(reqNum == REQNUM, "Expected " ~ REQNUM.to!string ~ " requests parsed, but got: " ~ reqNum.to!string);
+}
+
+void testLLHTTP()
+{
+    static uint reqNum;
+
+    extern (C)
+    static int onLLComplete(llhttp_t* p) {
+        ++reqNum;
+        return 0;
+    }
+
+    llhttp_t parser;
+    llhttp_settings_t settings;
+    settings.on_message_complete = &onLLComplete;
+
+    reqNum = 0;
+    const(char)[] data = requests;
+    llhttp_init(&parser, llhttp_type.HTTP_REQUEST, &settings);
+    immutable res = llhttp_execute(&parser, &data[0], data.length);
+    enforce(res == llhttp_errno.HPE_OK, "Unexpected response: " ~ res.to!string);
     enforce(reqNum == REQNUM, "Expected " ~ REQNUM.to!string ~ " requests parsed, but got: " ~ reqNum.to!string);
 }
 

@@ -1,13 +1,20 @@
-CFLAGS += -Wall -Wextra -Werror -O3 -march=native
+CFLAGS += -Wall -Wextra -Werror -O3 -march=native -Wno-unused-parameter -Wno-unused-variable
 CC?=gcc
 
-all: picohttpparser.o http_parser.o
+all: picohttpparser.o http_parser.o llhttp.o
 
-picohttpparser.o: picohttpparser.c
-	$(CC) $(CFLAGS) $(LDFLAGS) -o picohttpparser.o -c picohttpparser.c
+picohttpparser.o: picohttpparser/picohttpparser.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o picohttpparser.o -c picohttpparser/picohttpparser.c
 
-http_parser.o: http_parser.c
-	$(CC) $(CFLAGS) $(LDFLAGS) -o http_parser.o -c http_parser.c
+http_parser.o: http_parser/http_parser.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o http_parser.o -c http_parser/http_parser.c
+
+llhttp.o: llhttp/llhttp.c llhttp/http.o llhttp/api.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -o llhttp.o -c llhttp/llhttp.c
+	mv llhttp/*.o ./
+
+llhttp/%.o: llhttp/%.c llhttp/llhttp.h llhttp/api.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o
+	find . -type f -name "*.o" -exec rm -f {} \;
