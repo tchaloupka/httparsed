@@ -17,6 +17,7 @@ enum Error : int
     noMethod,       /// no method in request line
     noVersion,      /// no version in request line / response status line
     noUri,          /// no URI in request line
+    noStatus,       /// no status code or text in status line
     invalidVersion, /// invalid version for the protocol message
 }
 
@@ -133,6 +134,7 @@ private:
 
             if (!hasHeader || !buffer[i].among(' ', '\t'))
             {
+                // TODO: validate header token for invalid chars
                 // read header name
                 while (true)
                 {
@@ -143,13 +145,14 @@ private:
                 }
                 if (start == i) return err(Error.noHeaderName);
                 name = buffer[start..i]; // store header name
-                start = i = i+1; // move indexes after colon
+                i++; // move indexes after colon
                 while (true) // skip over SP and tabs
                 {
                     if (i+1 >= buffer.length) return err(Error.partial); // not enough data (>= because of increment above)
                     if (!buffer[i].among(' ', '\t')) break;
-                    start = i = i+1;
+                    i++;
                 }
+                start = i;
             }
             else name = null; // multiline header
 
@@ -180,6 +183,7 @@ private:
         size_t start, i;
         mixin(readToken!false);
         if (_expect(start == i, false)) return err(Error.noMethod);
+        // TODO: validate method token for invalid chars
         static if (__traits(hasMember, m_msg, "onMethod"))
         {
             static if (is(typeof(m_msg.onMethod("")) == void))
@@ -189,10 +193,10 @@ private:
                 if (r < 0) return r;
             }
         }
-        start = i = i+1; // skip SP
+        mixin(skipSpaces!(Error.noUri));
+        start = i;
 
         mixin(readToken!true);
-        if (_expect(start == i, false)) return err(Error.noUri);
         static if (__traits(hasMember, m_msg, "onUri"))
         {
             static if (is(typeof(m_msg.onUri("")) == void))
@@ -202,10 +206,10 @@ private:
                 if (ur < 0) return ur;
             }
         }
-        start = i = i+1; // skip SP
+        mixin(skipSpaces!(Error.noVersion));
+        start = i;
 
         mixin(readTokenToEol!(q{
-            if (_expect(start == i, false)) return err(Error.noVersion);
             static if (__traits(hasMember, m_msg, "onVersion"))
             {
                 static if (is(typeof(m_msg.onVersion("")) == void))
@@ -236,7 +240,8 @@ private:
                 if (r < 0) return r;
             }
         }
-        start = i = i+1; // skip SP
+        mixin(skipSpaces!(Error.noStatus));
+        start = i;
 
         if (_expect(i+3 >= buffer.length, false)) return err(Error.partial); // not enough data - we want at least [:digit:][:digit:][:digit:]<other char> to try to parse
         int code;
@@ -245,7 +250,7 @@ private:
             if (buffer[i+j] < '0' || buffer[i+j] > '9') return err(Error.status);
             code += (buffer[start+j] - '0') * m;
         }
-        start = i = i + 3; // keep the SP or other character (to check invalid character later)
+        i += 3;
         static if (__traits(hasMember, m_msg, "onStatus"))
         {
             static if (is(typeof(m_msg.onStatus(code)) == void))
@@ -255,21 +260,19 @@ private:
                 if (sr < 0) return sr;
             }
         }
+        if (_expect(i == buffer.length, false)) return err(Error.partial);
+        if (_expect(!buffer[i].among(' ', '\r'), false)) return err(Error.status); // Garbage after status
+        mixin(skipSpaces!(Error.noStatus));
+        start = i;
 
         mixin(readTokenToEol!(q{
-            if (start == i) {/*ok*/}
-            else if (buffer[start] == ' ') ++start;
-            else return err(Error.status); // Garbage after status
             static if (__traits(hasMember, m_msg, "onStatusMsg"))
             {
-                if (start != i)
-                {
-                    static if (is(typeof(m_msg.onStatusMsg("")) == void))
-                        m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
-                    else {
-                        auto smr = m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
-                        if (smr < 0) return smr;
-                    }
+                static if (is(typeof(m_msg.onStatusMsg("")) == void))
+                    m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
+                else {
+                    auto smr = m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
+                    if (smr < 0) return smr;
                 }
             }
         }, false));
@@ -292,6 +295,17 @@ private:
                 ++i;
             }
         })(extended ? "true" : "false");
+    }
+
+    template skipSpaces(Error err)
+    {
+        enum skipSpaces = format!(q{
+            do {
+                ++i;
+                if (_expect(buffer.length == i, false)) return err(Error.partial);
+                if (_expect(buffer[i] == '\r', false)) return err(Error.%s);
+            } while (buffer[i] == ' ');
+        })(err);
     }
 
     // advances buffer index to end of line
@@ -401,10 +415,10 @@ version (unittest)
 
     enum Test { err, complete, partial }
 
-    void writeln(Args...)(Args args) nothrow
+    void writeln(Args...)(Args args)
     {
         import std.stdio : w = writeln;
-        try w(args); catch (Exception ex){}
+        try debug w(args); catch (Exception ex){}
     }
 }
 
@@ -499,6 +513,7 @@ unittest
     parse("GET / HTTP/1.0\r\na\033b: c\r\n\r\n", Test.err); // CTL in header name
     parse("GET / HTTP/1.0\r\nab: c\033\r\n\r\n", Test.err); // CTL in header value
     parse("GET / HTTP/1.0\r\n/: 1\r\n\r\n", Test.err); // invalid char in header value
+    parse("GET   /   HTTP/1.0\r\n\r\n", Test.complete); // multiple spaces between tokens
 
     // accept MSB chars
     {
@@ -553,7 +568,7 @@ unittest
         auto parser = initParser!Msg();
 
         auto res = parser.parseResponse(data);
-        // if (res.hasError) writeln(res.error, ": ", msg);
+        // if (res < 0) writeln("Err: ", cast(Error)(-res));
         final switch (test)
         {
             case Test.err: assert(res < -Error.partial); break;
@@ -620,6 +635,7 @@ unittest
     assert(parse("HTTP/1.1 200 OK\r\n", Test.partial).statusMsg == "OK"); // incomplete 10
     assert(parse("HTTP/1.1 200 OK\n", Test.partial).statusMsg == "OK"); // incomplete 11
     assert(parse("HTTP/1.1 200 OK\r\nA: 1\r", Test.partial).headers.length == 0); // incomplete 11
+    parse("HTTP/1.1   200   OK\r\n\r\n", Test.complete); // multiple spaces between tokens
 
     // incomplete 12
     {
