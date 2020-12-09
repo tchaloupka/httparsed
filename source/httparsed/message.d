@@ -134,21 +134,22 @@ private:
 
             if (!hasHeader || !buffer[i].among(' ', '\t'))
             {
-                // TODO: validate header token for invalid chars
                 // read header name
                 while (true)
                 {
-                    if (i+1 == buffer.length) return err(Error.partial);
+                    if (_expect(i+1 == buffer.length, false)) return err(Error.partial);
                     if (buffer[i] == ':') break;
-                    if (!validCharsMap[buffer[i]]) return err(Error.headerName);
+                    if (_expect(!validCharsMap[buffer[i]], false)) return err(Error.headerName);
                     ++i;
                 }
-                if (start == i) return err(Error.noHeaderName);
+                if (_expect(start == i, false)) return err(Error.noHeaderName);
                 name = buffer[start..i]; // store header name
                 i++; // move indexes after colon
-                while (true) // skip over SP and tabs
+
+                // skip over SP and tabs
+                while (true)
                 {
-                    if (i+1 >= buffer.length) return err(Error.partial); // not enough data (>= because of increment above)
+                    if (_expect(i+1 >= buffer.length, false)) return err(Error.partial); // not enough data (>= because of increment above)
                     if (!buffer[i].among(' ', '\t')) break;
                     i++;
                 }
@@ -157,7 +158,7 @@ private:
             else name = null; // multiline header
 
             // parse value
-            mixin(readTokenToEol!("value = buffer[start..i];", true, [' ', '\t']));
+            mixin(readTokenToEol!("value = buffer[start..i];"));
 
             hasHeader = true; // flag to define that we can now accept multiline header values
             static if (__traits(hasMember, m_msg, "onHeader"))
@@ -176,6 +177,7 @@ private:
             buffer = buffer[i..$];
             start = i = 0;
         }
+        assert(0);
     }
 
     auto parseRequestLine(ref const(ubyte)[] buffer)
@@ -219,7 +221,7 @@ private:
                     if (vr < 0) return vr;
                 }
             }
-        }, false));
+        }));
 
         // advance buffer after the request line
         buffer = buffer[i..$];
@@ -275,7 +277,7 @@ private:
                     if (smr < 0) return smr;
                 }
             }
-        }, false));
+        }));
 
         // advance buffer after the status line
         buffer = buffer[i..$];
@@ -311,46 +313,57 @@ private:
     // advances buffer index to end of line
     // handles token value with provided code snipet (using %s as placeholder for the actual value)
     // consumes the eol chars too
-    template readTokenToEol(string handler, bool extended, char[] exceptions = null)
+    template readTokenToEol(string handler)
     {
-        import std.algorithm : map, joiner;
-        import std.conv : text, to;
-
         enum readTokenToEol = format!q{
-            while (true)
+            // fast manual loop to iterate over 16 characters
+            while (_expect(buffer.length - i >= 16, true))
             {
-                if (_expect(i == buffer.length, false)) return err(Error.partial);
-                if (!isPrintableAscii!%s(buffer[i])%s)
+                static foreach (_; 0..16)
                 {
-                    if (buffer[i] == '\r')
-                    {
-                        %s
-                        if (i+1 == buffer.length) return err(Error.partial);
-                        else if (buffer[i+1] != '\n') return err(Error.newLine);
-                        i+=2;
-                        break;
-                    }
-                    if (buffer[i] == '\n')
-                    {
-                        %s
-                        ++i;
-                        break;
-                    }
-                    return err(Error.token);
+                    if (_expect(!isPrintableAscii(buffer[i]), false)) goto NonPrintable;
+                    ++i;
                 }
+                continue;
+
+                NonPrintable:
+                if ((_expect(buffer[i] < 32u, true) && _expect(buffer[i] != 9u, true)) || _expect(buffer[i] == 127, false))
+                    goto EOL;
                 ++i;
             }
-        }(
-            extended ? "true" : "false",
-            exceptions is null ? "" : ("&& " ~ exceptions.map!(`"buffer[i] != " ~ (cast(ubyte)a).to!string`).joiner(" && ").text), // see https://issues.dlang.org/show_bug.cgi?id=17547
-            handler, handler
-        );
+
+            // handle the rest
+            for (;; ++i)
+            {
+                if (_expect(i == buffer.length, false)) return err(Error.partial);
+                if (_expect(!isPrintableAscii(buffer[i]), false))
+                {
+                    if ((_expect(buffer[i] < 32u, true) && _expect(buffer[i] != 9u, true)) || _expect(buffer[i] == 127, false))
+                        goto EOL;
+                }
+            }
+
+            EOL:
+            if (_expect(buffer[i] == '\r', true))
+            {
+                %s
+                if (_expect(i+1 == buffer.length, false)) return err(Error.partial);
+                if (_expect(buffer[i+1] != '\n', false)) return err(Error.newLine);
+                i += 2;
+            }
+            else if (buffer[i] == '\n')
+            {
+                %s
+                ++i;
+            }
+            else return err(Error.token);
+        }(handler, handler);
     }
 }
 
 private int err(Error e) { pragma(inline, true); return -(cast(int)e); }
 
-private bool isPrintableAscii(bool extended)(ubyte c) pure
+private bool isPrintableAscii(bool extended = false)(ubyte c) pure
 {
     pragma(inline, true);
     static if (extended) return c >= 0x80 || cast(ubyte)(c - 0x20u) < 0x5fu;
