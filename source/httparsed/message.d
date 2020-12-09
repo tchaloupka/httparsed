@@ -135,13 +135,24 @@ private:
             if (!hasHeader || !buffer[i].among(' ', '\t'))
             {
                 // read header name
-                while (true)
+                while (i+8 < buffer.length) // faster loop in batch 8 chars
                 {
-                    if (_expect(i+1 == buffer.length, false)) return err(Error.partial);
-                    if (buffer[i] == ':') break;
+                    static foreach (_; 0..8) {
+                        if (buffer[i] == ':') goto HDR;
+                        if (_expect(!validCharsMap[buffer[i]], false)) return err(Error.headerName);
+                        ++i;
+                    }
+                }
+
+                while (i < buffer.length) // rest
+                {
+                    if (buffer[i] == ':') goto HDR;
                     if (_expect(!validCharsMap[buffer[i]], false)) return err(Error.headerName);
                     ++i;
                 }
+                return err(Error.partial);
+
+                HDR:
                 if (_expect(start == i, false)) return err(Error.noHeaderName);
                 name = buffer[start..i]; // store header name
                 i++; // move indexes after colon
