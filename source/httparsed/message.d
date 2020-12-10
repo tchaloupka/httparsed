@@ -295,6 +295,45 @@ private:
         return 0;
     }
 
+    static if (LDC_with_SSE42)
+    {
+        bool findCharSSE(string ranges)(const(ubyte)[] buf, ref size_t idx) pure @trusted
+        {
+            static assert(ranges.length <= 16, "Ranges must be at most 16 characters long");
+            static assert(ranges.length % 2 == 0, "Ranges must have even number of characters");
+
+            static immutable char[16] rng = ranges;
+            enum rangesSize = ranges.length;
+
+            if (_expect(buf.length - idx >= 16, true))
+            {
+                size_t i = idx;
+                size_t left = (buf.length - idx) & ~15; // round down to multiple of 16
+                __m128i ranges16 = _mm_loadu_si128(cast(__m128i*)&rng); // load ranges SIMD register
+
+                do
+                {
+                    __m128i b16 = _mm_loadu_si128(cast(__m128i*)&buf[i]); // load next part of the buffer to SIMD register
+                    immutable r = _mm_cmpestri(
+                        cast(byte16)ranges16, rangesSize,
+                        cast(byte16)b16, 16,
+                        _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES | _SIDD_UBYTE_OPS
+                    );
+
+                    if (_expect(r != 16, false))
+                    {
+                        idx = i+r;
+                        return true;
+                    }
+                    i += 16;
+                    left -= 16;
+                }
+                while (_expect(left != 0, true));
+            }
+            return false;
+        }
+    }
+
     // advances buffer index to next SP
     // extended is used to switch between 7bit ASCII or 8bit extended ascii as valid chars
     template readToken(bool extended)
@@ -327,20 +366,32 @@ private:
     template readTokenToEol(string handler)
     {
         enum readTokenToEol = format!q{
-            // fast manual loop to iterate over 16 characters
-            while (_expect(buffer.length - i >= 16, true))
+            static if (LDC_with_SSE42)
             {
-                static foreach (_; 0..16)
+                enum ranges =     "\0\010"    // allow HT
+                                ~ "\012\037"  // allow SP and up to but not including DEL
+                                ~ "\177\177"; // allow chars w. MSB set
+
+                if (findCharSSE!ranges(buffer, i))
+                    goto EOL;
+            }
+            else
+            {
+                // faster unrolled loop to iterate over 16 characters
+                while (_expect(buffer.length - i >= 16, true))
                 {
-                    if (_expect(!isPrintableAscii(buffer[i]), false)) goto NonPrintable;
+                    static foreach (_; 0..16)
+                    {
+                        if (_expect(!isPrintableAscii(buffer[i]), false)) goto NonPrintable;
+                        ++i;
+                    }
+                    continue;
+
+                    NonPrintable:
+                    if ((_expect(buffer[i] < 32u, true) && _expect(buffer[i] != 9u, true)) || _expect(buffer[i] == 127, false))
+                        goto EOL;
                     ++i;
                 }
-                continue;
-
-                NonPrintable:
-                if ((_expect(buffer[i] < 32u, true) && _expect(buffer[i] != 9u, true)) || _expect(buffer[i] == 127, false))
-                    goto EOL;
-                ++i;
             }
 
             // handle the rest

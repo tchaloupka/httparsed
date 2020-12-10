@@ -1,2 +1,9 @@
 name "httparsed"
 targetType "library"
+
+configuration "default" {
+}
+
+configuration "unittest" {
+    dflags "-mcpu=native" platform="ldc"
+}
