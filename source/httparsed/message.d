@@ -4,7 +4,6 @@
 module httparsed.message;
 
 import httparsed.intrinsics;
-import std.algorithm : among;
 import std.format : format;
 
 nothrow @safe @nogc:
@@ -142,7 +141,7 @@ private:
                 return 0;
             }
 
-            if (!hasHeader || !buffer[i].among(' ', '\t'))
+            if (!hasHeader || (buffer[i] != ' ' && buffer[i] != '\t'))
             {
                 auto ret = parseToken!(tokenRanges, ':', tokenSSERanges)(buffer, i);
                 if (_expect(ret < 0, false)) return ret;
@@ -154,7 +153,7 @@ private:
                 for (;; ++i)
                 {
                     if (_expect(i == buffer.length, false)) return err(Error.partial);
-                    if (!buffer[i].among(' ', '\t')) break;
+                    if (buffer[i] != ' ' && buffer[i] != '\t') break;
                 }
                 start = i;
             }
@@ -168,8 +167,14 @@ private:
             hasHeader = true; // flag to define that we can now accept multiline header values
             static if (__traits(hasMember, m_msg, "onHeader"))
             {
-                import std.algorithm : stripRight;
-                value = value.stripRight!(a => a == '\t' || a == ' '); // remove trailing SPs and HTABs
+                // remove trailing SPs and HTABs
+                if (_expect(value.length, true))
+                {
+                    int j = cast(int)(value.length - 1);
+                    for (; j != 0; --j) if (value[j] != ' ' && value[j] != '\t') break;
+                    value = value[0..j+1];
+                }
+
                 static if (is(typeof(m_msg.onHeader("", "")) == void))
                     m_msg.onHeader(cast(const(char)[])name, cast(const(char)[])value);
                 else {
@@ -280,8 +285,10 @@ private:
                 if (sr < 0) return sr;
             }
         }
-        if (_expect(i == buffer.length, false)) return err(Error.partial);
-        if (_expect(!buffer[i].among(' ', '\r'), false)) return err(Error.status); // Garbage after status
+        if (_expect(i == buffer.length, false))
+            return err(Error.partial);
+        if (_expect(buffer[i] != ' ' && buffer[i] != '\r' && buffer[i] != '\n', false))
+            return err(Error.status); // Garbage after status
 
         mixin(skipSpaces!(Error.noStatus));
         start = i;
