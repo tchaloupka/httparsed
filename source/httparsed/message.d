@@ -1,3 +1,6 @@
+/**
+ *
+ */
 module httparsed.message;
 
 import httparsed.intrinsics;
@@ -6,6 +9,7 @@ import std.format : format;
 
 nothrow @safe @nogc:
 
+/// Parser error codes
 enum Error : int
 {
     partial = 1,    /// not enough data to parse message
@@ -24,9 +28,9 @@ enum Error : int
 /// Helper function to initialize message parser
 auto initParser(MSG, Args...)(Args args) { return MsgParser!MSG(args); }
 
-/++
-    HTTP/RTSP message parser.
-+/
+/**
+ *  HTTP/RTSP message parser.
+ */
 struct MsgParser(MSG)
 {
     import std.traits : ForeachType, isArray, Unqual;
@@ -71,6 +75,14 @@ struct MsgParser(MSG)
 
 private:
 
+    // character map of valid characters for token, forbidden:
+    //   0-SP, DEL, HT
+    //   ()<>@,;:\"/[]?={}
+    enum tokenRanges = "\0 \"\"(),,//:@[]{}\x7f\xff";
+    enum tokenSSERanges = "\0 \"\"(),,//:@[]{\xff"; // merge of last range due to the SSE register size limit
+
+    enum versionRanges = "\0-:@[`{\xff"; // allow only [A-Za-z./] characters
+
     MSG m_msg;
 
     int parse(alias pred)(const(ubyte)[] buffer, ref uint lastPos)
@@ -109,14 +121,12 @@ private:
 
     int parseHeaders(ref const(ubyte)[] buffer)
     {
-        static immutable bool[256] validCharsMap = buildHeaderNameValidCharMap();
-
         bool hasHeader;
         size_t start, i;
         const(ubyte)[] name, value;
         while (true)
         {
-            assert(i == 0);
+            // check for msg headers end
             if (_expect(buffer.length == 0, false)) return err(Error.partial);
             if (buffer[0] == '\r')
             {
@@ -134,43 +144,27 @@ private:
 
             if (!hasHeader || !buffer[i].among(' ', '\t'))
             {
-                // read header name
-                while (i+8 < buffer.length) // faster loop in batch 8 chars
-                {
-                    static foreach (_; 0..8) {
-                        if (buffer[i] == ':') goto HDR;
-                        if (_expect(!validCharsMap[buffer[i]], false)) return err(Error.headerName);
-                        ++i;
-                    }
-                }
-
-                while (i < buffer.length) // rest
-                {
-                    if (buffer[i] == ':') goto HDR;
-                    if (_expect(!validCharsMap[buffer[i]], false)) return err(Error.headerName);
-                    ++i;
-                }
-                return err(Error.partial);
-
-                HDR:
+                auto ret = parseToken!(tokenRanges, ':', tokenSSERanges)(buffer, i);
+                if (_expect(ret < 0, false)) return ret;
                 if (_expect(start == i, false)) return err(Error.noHeaderName);
                 name = buffer[start..i]; // store header name
-                i++; // move indexes after colon
+                i++; // move index after colon
 
-                // skip over SP and tabs
-                while (true)
+                // skip over SP and HT
+                for (;; ++i)
                 {
-                    if (_expect(i+1 >= buffer.length, false)) return err(Error.partial); // not enough data (>= because of increment above)
+                    if (_expect(i == buffer.length, false)) return err(Error.partial);
                     if (!buffer[i].among(' ', '\t')) break;
-                    i++;
                 }
                 start = i;
             }
             else name = null; // multiline header
 
             // parse value
-            mixin(readTokenToEol!("value = buffer[start..i];"));
-
+            auto ret = parseToken!("\0\010\012\037\177\177", "\r\n")(buffer, i);
+            if (_expect(ret < 0, false)) return ret;
+            value = buffer[start..i];
+            mixin(advanceNewline);
             hasHeader = true; // flag to define that we can now accept multiline header values
             static if (__traits(hasMember, m_msg, "onHeader"))
             {
@@ -194,9 +188,12 @@ private:
     auto parseRequestLine(ref const(ubyte)[] buffer)
     {
         size_t start, i;
-        mixin(readToken!false);
+
+        // METHOD
+        auto ret = parseToken!(tokenRanges, ' ', tokenSSERanges)(buffer, i);
+        if (_expect(ret < 0, false)) return ret;
         if (_expect(start == i, false)) return err(Error.noMethod);
-        // TODO: validate method token for invalid chars
+
         static if (__traits(hasMember, m_msg, "onMethod"))
         {
             static if (is(typeof(m_msg.onMethod("")) == void))
@@ -209,7 +206,9 @@ private:
         mixin(skipSpaces!(Error.noUri));
         start = i;
 
-        mixin(readToken!true);
+        // PATH
+        ret = parseToken!("\000\040\177\177", ' ')(buffer, i);
+        if (_expect(ret < 0, false)) return ret;
         static if (__traits(hasMember, m_msg, "onUri"))
         {
             static if (is(typeof(m_msg.onUri("")) == void))
@@ -222,17 +221,19 @@ private:
         mixin(skipSpaces!(Error.noVersion));
         start = i;
 
-        mixin(readTokenToEol!(q{
-            static if (__traits(hasMember, m_msg, "onVersion"))
-            {
-                static if (is(typeof(m_msg.onVersion("")) == void))
-                    m_msg.onVersion(cast(const(char)[])buffer[start..i]);
-                else {
-                    auto vr = m_msg.onVersion(cast(const(char)[])buffer[start..i]);
-                    if (vr < 0) return vr;
-                }
+        // VERSION
+        ret = parseToken!(versionRanges, "\r\n")(buffer, i);
+        if (_expect(ret < 0, false)) return ret;
+        static if (__traits(hasMember, m_msg, "onVersion"))
+        {
+            static if (is(typeof(m_msg.onVersion("")) == void))
+                m_msg.onVersion(cast(const(char)[])buffer[start..i]);
+            else {
+                auto vr = m_msg.onVersion(cast(const(char)[])buffer[start..i]);
+                if (vr < 0) return vr;
             }
-        }));
+        }
+        mixin(advanceNewline);
 
         // advance buffer after the request line
         buffer = buffer[i..$];
@@ -242,7 +243,10 @@ private:
     auto parseStatusLine(ref const(ubyte)[] buffer)
     {
         size_t start, i;
-        mixin(readToken!false);
+
+        // VERSION
+        auto ret = parseToken!(versionRanges, ' ')(buffer, i);
+        if (_expect(ret < 0, false)) return ret;
         if (_expect(start == i, false)) return err(Error.noVersion);
         static if (__traits(hasMember, m_msg, "onVersion"))
         {
@@ -256,7 +260,10 @@ private:
         mixin(skipSpaces!(Error.noStatus));
         start = i;
 
-        if (_expect(i+3 >= buffer.length, false)) return err(Error.partial); // not enough data - we want at least [:digit:][:digit:][:digit:]<other char> to try to parse
+        // STATUS CODE
+        if (_expect(i+3 >= buffer.length, false))
+            return err(Error.partial); // not enough data - we want at least [:digit:][:digit:][:digit:]<other char> to try to parse
+
         int code;
         foreach (j, m; [100, 10, 1])
         {
@@ -275,20 +282,23 @@ private:
         }
         if (_expect(i == buffer.length, false)) return err(Error.partial);
         if (_expect(!buffer[i].among(' ', '\r'), false)) return err(Error.status); // Garbage after status
+
         mixin(skipSpaces!(Error.noStatus));
         start = i;
 
-        mixin(readTokenToEol!(q{
-            static if (__traits(hasMember, m_msg, "onStatusMsg"))
-            {
-                static if (is(typeof(m_msg.onStatusMsg("")) == void))
-                    m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
-                else {
-                    auto smr = m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
-                    if (smr < 0) return smr;
-                }
+        // MESSAGE
+        ret = parseToken!("\0\010\012\037\177\177", "\r\n")(buffer, i);
+        if (_expect(ret < 0, false)) return ret;
+        static if (__traits(hasMember, m_msg, "onStatusMsg"))
+        {
+            static if (is(typeof(m_msg.onStatusMsg("")) == void))
+                m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
+            else {
+                auto smr = m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
+                if (smr < 0) return smr;
             }
-        }));
+        }
+        mixin(advanceNewline);
 
         // advance buffer after the status line
         buffer = buffer[i..$];
@@ -334,21 +344,63 @@ private:
         }
     }
 
-    // advances buffer index to next SP
-    // extended is used to switch between 7bit ASCII or 8bit extended ascii as valid chars
-    template readToken(bool extended)
+    /*
+     * Advances buffer over the token to the next character while checking for valid characters.
+     * On success, buffer index is left on the next character.
+     *
+     * Params:
+     *      - ranges = ranges of characters to stop on
+     *      - sseRanges = if null, same ranges is used, but they are limited to 8 ranges
+     *      - next  = next character/s to stop on (must be present in the provided ranges too)
+     * Returns: 0 on success error code otherwise
+     */
+    int parseToken(string ranges, alias next, string sseRanges = null)(const(ubyte)[] buffer, ref size_t i) pure
     {
-        enum readToken = format!(q{
-            while (true)
+        static immutable charMap = buildValidCharMap(ranges);
+        static if (LDC_with_SSE42)
+            findCharSSE!(sseRanges is null ? ranges : sseRanges)(buffer, i);
+        else
+        {
+            // faster unrolled loop to iterate over 8 characters
+            loop: while (_expect(buffer.length - i >= 8, true))
             {
-                if (_expect(i == buffer.length, false)) return err(Error.partial);
-                if (buffer[i] == ' ') break;
-                if (_expect(!isPrintableAscii!%s(buffer[i]), false)) return err(Error.token);
-                ++i;
+                static foreach (_; 0..8)
+                {
+                    if (_expect(!charMap[buffer[i]], false)) break loop;
+                    ++i;
+                }
             }
-        })(extended ? "true" : "false");
+        }
+
+        // handle the rest
+        for (;; ++i)
+        {
+            if (_expect(i == buffer.length, false)) return err(Error.partial);
+            static if (is(typeof(next) == char)) {
+                if (buffer[i] == next) return 0;
+            } else {
+                static assert(next.length > 0, "Next character not provided");
+                static foreach (c; next)
+                    if (buffer[i] == c) return 0;
+            }
+            if (_expect(!charMap[buffer[i]], false)) return err(Error.token);
+        }
     }
 
+    // advances over new line
+    enum advanceNewline = q{
+            assert(i < buffer.length);
+            if (_expect(buffer[i] == '\r', true))
+            {
+                if (_expect(i+1 == buffer.length, false)) return err(Error.partial);
+                if (_expect(buffer[i+1] != '\n', false)) return err(Error.newLine);
+                i += 2;
+            }
+            else if (buffer[i] == '\n') ++i;
+            else assert(0);
+        };
+
+    // skips over spaces in the buffer
     template skipSpaces(Error err)
     {
         enum skipSpaces = format!(q{
@@ -359,101 +411,36 @@ private:
             } while (buffer[i] == ' ');
         })(err);
     }
-
-    // advances buffer index to end of line
-    // handles token value with provided code snipet (using %s as placeholder for the actual value)
-    // consumes the eol chars too
-    template readTokenToEol(string handler)
-    {
-        enum readTokenToEol = format!q{
-            static if (LDC_with_SSE42)
-            {
-                enum ranges =     "\0\010"    // allow HT
-                                ~ "\012\037"  // allow SP and up to but not including DEL
-                                ~ "\177\177"; // allow chars w. MSB set
-
-                if (findCharSSE!ranges(buffer, i))
-                    goto EOL;
-            }
-            else
-            {
-                // faster unrolled loop to iterate over 16 characters
-                while (_expect(buffer.length - i >= 16, true))
-                {
-                    static foreach (_; 0..16)
-                    {
-                        if (_expect(!isPrintableAscii(buffer[i]), false)) goto NonPrintable;
-                        ++i;
-                    }
-                    continue;
-
-                    NonPrintable:
-                    if ((_expect(buffer[i] < 32u, true) && _expect(buffer[i] != 9u, true)) || _expect(buffer[i] == 127, false))
-                        goto EOL;
-                    ++i;
-                }
-            }
-
-            // handle the rest
-            for (;; ++i)
-            {
-                if (_expect(i == buffer.length, false)) return err(Error.partial);
-                if (_expect(!isPrintableAscii(buffer[i]), false))
-                {
-                    if ((_expect(buffer[i] < 32u, true) && _expect(buffer[i] != 9u, true)) || _expect(buffer[i] == 127, false))
-                        goto EOL;
-                }
-            }
-
-            EOL:
-            if (_expect(buffer[i] == '\r', true))
-            {
-                %s
-                if (_expect(i+1 == buffer.length, false)) return err(Error.partial);
-                if (_expect(buffer[i+1] != '\n', false)) return err(Error.newLine);
-                i += 2;
-            }
-            else if (buffer[i] == '\n')
-            {
-                %s
-                ++i;
-            }
-            else return err(Error.token);
-        }(handler, handler);
-    }
 }
 
-private int err(Error e) { pragma(inline, true); return -(cast(int)e); }
+private int err(Error e) pure { pragma(inline, true); return -(cast(int)e); }
 
-private bool isPrintableAscii(bool extended = false)(ubyte c) pure
+/// Builds valid char map from the provided ranges of invalid ones
+bool[256] buildValidCharMap()(string invalidRanges)
 {
-    pragma(inline, true);
-    static if (extended) return c >= 0x80 || cast(ubyte)(c - 0x20u) < 0x5fu;
-    else return cast(ubyte)(c - 0x20u) < 0x5fu;
-}
+    assert(invalidRanges.length % 2 == 0, "Uneven ranges");
+    bool[256] res = true;
 
-bool[256] buildHeaderNameValidCharMap()()
-{
-    bool[256] res;
-    foreach (i; 0..256)
-    {
-        ubyte ch = cast(ubyte)i;
-        switch (ch)
-        {
-            case '\0': ..case ' ':   /* control chars and up to SP */
-            case '"':                /* 0x22 */
-            case '(': ..case ')':    /* 0x28,0x29 */
-            case ',':                /* 0x2c */
-            case '/':                /* 0x2f */
-            case ':': ..case '@':    /* 0x3a-0x40 */
-            case '[': ..case ']':    /* 0x5b-0x5d */
-            case '{': ..case '\377': /* 0x7b-0xff */
-                continue;
-            default: res[i] = true; break;
-        }
-    }
-
+    for (int i=0; i < invalidRanges.length; i+=2)
+        for (int j=invalidRanges[i]; j <= invalidRanges[i+1]; ++j)
+            res[j] = false;
     return res;
+}
+
+unittest
+{
+    string ranges = "\0 \"\"(),,//:@[]{{}}\x7f\xff";
+    assert(buildValidCharMap(ranges) ==
+        cast(bool[])[
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,1,0,1,1,1,1,1,0,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,
+            0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,1,1,
+            1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,0,
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        ]);
 }
 
 version (unittest)
@@ -470,7 +457,11 @@ version (unittest)
         void onMethod(const(char)[] method) { this.method = method; }
         void onUri(const(char)[] uri) { this.uri = uri; }
         void onVersion(const(char)[] ver) { this.ver = ver; }
-        void onHeader(const(char)[] name, const(char)[] value) { this.m_headers[m_headersLength++] = Header(name, value); }
+        void onHeader(const(char)[] name, const(char)[] value)
+        {
+            this.m_headers[m_headersLength].name = name;
+            this.m_headers[m_headersLength++].value = value;
+        }
         void onStatus(int status) { this.status = status; }
         void onStatusMsg(const(char)[] statusMsg) { this.statusMsg = statusMsg; }
 
@@ -506,6 +497,7 @@ unittest
     {
         auto parser = initParser!Msg();
         auto res = parser.parseRequest(data);
+        // if (res < 0) writeln("Err: ", cast(Error)(-res));
         final switch (test)
         {
             case Test.err: assert(res < -Error.partial); break;

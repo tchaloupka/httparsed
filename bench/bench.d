@@ -12,7 +12,7 @@ import llhttp;
 
 immutable string requests = import("requests.txt");
 enum REQNUM = 275; // number of requests in the requests.txt
-enum LOOPS = 10_000;
+enum LOOPS = 100_000;
 
 void main()
 {
