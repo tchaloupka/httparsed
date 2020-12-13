@@ -290,7 +290,6 @@ private:
         if (_expect(buffer[i] != ' ' && buffer[i] != '\r' && buffer[i] != '\n', false))
             return err(Error.status); // Garbage after status
 
-        mixin(skipSpaces!(Error.noStatus));
         start = i;
 
         // MESSAGE
@@ -298,11 +297,19 @@ private:
         if (_expect(ret < 0, false)) return ret;
         static if (__traits(hasMember, m_msg, "onStatusMsg"))
         {
-            static if (is(typeof(m_msg.onStatusMsg("")) == void))
-                m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
-            else {
-                auto smr = m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
-                if (smr < 0) return smr;
+            // remove preceding space (we did't advance over spaces because possibly missing status message)
+            if (i > start)
+            {
+                while (buffer[start] == ' ' && start < i) start++;
+                if (i > start)
+                {
+                    static if (is(typeof(m_msg.onStatusMsg("")) == void))
+                        m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
+                    else {
+                        auto smr = m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
+                        if (smr < 0) return smr;
+                    }
+                }
             }
         }
         mixin(advanceNewline);
@@ -310,45 +317,6 @@ private:
         // advance buffer after the status line
         buffer = buffer[i..$];
         return 0;
-    }
-
-    static if (LDC_with_SSE42)
-    {
-        bool findCharSSE(string ranges)(const(ubyte)[] buf, ref size_t idx) pure @trusted
-        {
-            static assert(ranges.length <= 16, "Ranges must be at most 16 characters long");
-            static assert(ranges.length % 2 == 0, "Ranges must have even number of characters");
-
-            static immutable char[16] rng = ranges;
-            enum rangesSize = ranges.length;
-
-            if (_expect(buf.length - idx >= 16, true))
-            {
-                size_t i = idx;
-                size_t left = (buf.length - idx) & ~15; // round down to multiple of 16
-                __m128i ranges16 = _mm_loadu_si128(cast(__m128i*)&rng); // load ranges SIMD register
-
-                do
-                {
-                    __m128i b16 = _mm_loadu_si128(cast(__m128i*)&buf[i]); // load next part of the buffer to SIMD register
-                    immutable r = _mm_cmpestri(
-                        cast(byte16)ranges16, rangesSize,
-                        cast(byte16)b16, 16,
-                        _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES | _SIDD_UBYTE_OPS
-                    );
-
-                    if (_expect(r != 16, false))
-                    {
-                        idx = i+r;
-                        return true;
-                    }
-                    i += 16;
-                    left -= 16;
-                }
-                while (_expect(left != 0, true));
-            }
-            return false;
-        }
     }
 
     /*
@@ -364,8 +332,43 @@ private:
     int parseToken(string ranges, alias next, string sseRanges = null)(const(ubyte)[] buffer, ref size_t i) pure
     {
         static immutable charMap = buildValidCharMap(ranges);
+
         static if (LDC_with_SSE42)
-            findCharSSE!(sseRanges is null ? ranges : sseRanges)(buffer, i);
+        {
+            static if (sseRanges) alias usedRng = sseRanges;
+            else alias usedRng = ranges;
+            static assert(usedRng.length <= 16, "Ranges must be at most 16 characters long");
+            static assert(usedRng.length % 2 == 0, "Ranges must have even number of characters");
+            enum rangesSize = usedRng.length;
+
+            // hacky way to set byte16 enum
+            mixin("enum byte16 rngE = cast(byte[])" ~ format!`[%(%d,%)];`(cast(immutable(ubyte)[])(usedRng)));
+
+            if (_expect(buffer.length - i >= 16, true))
+            {
+                size_t left = (buffer.length - i) & ~15; // round down to multiple of 16
+                byte16 ranges16 = rngE;
+
+                do
+                {
+                    byte16 b16 = () @trusted { return cast(byte16)_mm_loadu_si128(cast(__m128i*)&buffer[i]); }();
+                    immutable r = _mm_cmpestri(
+                        ranges16, rangesSize,
+                        b16, 16,
+                        _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES | _SIDD_UBYTE_OPS
+                    );
+
+                    if (_expect(r != 16, false))
+                    {
+                        i += r;
+                        break;
+                    }
+                    i += 16;
+                    left -= 16;
+                }
+                while (_expect(left != 0, true));
+            }
+        }
         else
         {
             // faster unrolled loop to iterate over 8 characters
@@ -380,17 +383,21 @@ private:
         }
 
         // handle the rest
-        for (;; ++i)
+        if (_expect(i >= buffer.length, false)) return err(Error.partial);
+        while (true)
         {
-            if (_expect(i == buffer.length, false)) return err(Error.partial);
             static if (is(typeof(next) == char)) {
+                static assert(!charMap[next], "Next character is not in ranges");
                 if (buffer[i] == next) return 0;
             } else {
                 static assert(next.length > 0, "Next character not provided");
-                static foreach (c; next)
+                static foreach (c; next) {
+                    static assert(!charMap[c], "Next character is not in ranges");
                     if (buffer[i] == c) return 0;
+                }
             }
             if (_expect(!charMap[buffer[i]], false)) return err(Error.token);
+            if (_expect(++i == buffer.length, false)) return err(Error.partial);
         }
     }
 
@@ -414,7 +421,7 @@ private:
             do {
                 ++i;
                 if (_expect(buffer.length == i, false)) return err(Error.partial);
-                if (_expect(buffer[i] == '\r', false)) return err(Error.%s);
+                if (_expect(buffer[i] == '\r' || buffer[i] == '\n', false)) return err(Error.%s);
             } while (buffer[i] == ' ');
         })(err);
     }
