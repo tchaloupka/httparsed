@@ -168,10 +168,12 @@ private:
             static if (__traits(hasMember, m_msg, "onHeader"))
             {
                 // remove trailing SPs and HTABs
-                if (_expect(value.length, true))
+                if (_expect(value.length && (value[$-1] == ' ' || value[$-1] == '\t'), false))
                 {
-                    int j = cast(int)(value.length - 1);
-                    for (; j != 0; --j) if (value[j] != ' ' && value[j] != '\t') break;
+                    int j = cast(int)value.length - 2;
+                    for (; j >= 0; --j)
+                        if (!(value[j] == ' ' || value[j] == '\t'))
+                            break;
                     value = value[0..j+1];
                 }
 
@@ -179,7 +181,7 @@ private:
                     m_msg.onHeader(cast(const(char)[])name, cast(const(char)[])value);
                 else {
                     auto r = m_msg.onHeader(cast(const(char)[])name, cast(const(char)[])value);
-                    if (r < 0) return r;
+                    if (_expect(r < 0, false)) return r;
                 }
             }
 
@@ -205,7 +207,7 @@ private:
                 m_msg.onMethod(cast(const(char)[])buffer[start..i]);
             else {
                 auto r = m_msg.onMethod(cast(const(char)[])buffer[start..i]);
-                if (r < 0) return r;
+                if (_expect(r < 0, false)) return r;
             }
         }
         mixin(skipSpaces!(Error.noUri));
@@ -220,7 +222,7 @@ private:
                 m_msg.onUri(cast(const(char)[])buffer[start..i]);
             else {
                 auto ur = m_msg.onUri(cast(const(char)[])buffer[start..i]);
-                if (ur < 0) return ur;
+                if (_expect(ur < 0, false)) return ur;
             }
         }
         mixin(skipSpaces!(Error.noVersion));
@@ -235,7 +237,7 @@ private:
                 m_msg.onVersion(cast(const(char)[])buffer[start..i]);
             else {
                 auto vr = m_msg.onVersion(cast(const(char)[])buffer[start..i]);
-                if (vr < 0) return vr;
+                if (_expect(vr < 0, false)) return vr;
             }
         }
         mixin(advanceNewline);
@@ -259,7 +261,7 @@ private:
                 m_msg.onVersion(cast(const(char)[])buffer[start..i]);
             else {
                 auto r = m_msg.onVersion(cast(const(char)[])buffer[start..i]);
-                if (r < 0) return r;
+                if (_expect(r < 0, false)) return r;
             }
         }
         mixin(skipSpaces!(Error.noStatus));
@@ -282,7 +284,7 @@ private:
                 m_msg.onStatus(code);
             else {
                 auto sr = m_msg.onStatus(code);
-                if (sr < 0) return sr;
+                if (_expect(sr < 0, false)) return sr;
             }
         }
         if (_expect(i == buffer.length, false))
@@ -307,7 +309,7 @@ private:
                         m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
                     else {
                         auto smr = m_msg.onStatusMsg(cast(const(char)[])buffer[start..i]);
-                        if (smr < 0) return smr;
+                        if (_expect(smr < 0, false)) return smr;
                     }
                 }
             }
@@ -331,6 +333,7 @@ private:
      */
     int parseToken(string ranges, alias next, string sseRanges = null)(const(ubyte)[] buffer, ref size_t i) pure
     {
+        pragma(inline, true);
         static immutable charMap = buildValidCharMap(ranges);
 
         static if (LDC_with_SSE42)
@@ -358,10 +361,10 @@ private:
                         _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES | _SIDD_UBYTE_OPS
                     );
 
-                    if (_expect(r != 16, false))
+                    if (r != 16)
                     {
                         i += r;
-                        break;
+                        goto FOUND;
                     }
                     i += 16;
                     left -= 16;
@@ -376,7 +379,7 @@ private:
             {
                 static foreach (_; 0..8)
                 {
-                    if (_expect(!charMap[buffer[i]], false)) break loop;
+                    if (_expect(!charMap[buffer[i]], false)) goto FOUND;
                     ++i;
                 }
             }
@@ -384,6 +387,8 @@ private:
 
         // handle the rest
         if (_expect(i >= buffer.length, false)) return err(Error.partial);
+
+        FOUND:
         while (true)
         {
             static if (is(typeof(next) == char)) {

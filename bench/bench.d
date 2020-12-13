@@ -25,7 +25,8 @@ void main()
         writeln(
             name,
             cast(double)nsecs/totalReq, " ns/req, ",
-            cast(double)bytes/secs/1024/1024, " MB/s"
+            cast(double)bytes/secs/1024/1024, " MB/s, ",
+            cast(size_t)(totalReq / secs), " rps"
         );
     }
 
@@ -150,7 +151,11 @@ struct Msg
     void onMethod(const(char)[] method) { this.method = method; }
     void onUri(const(char)[] uri) { this.uri = uri; }
     void onVersion(const(char)[] ver) { this.ver = ver; }
-    void onHeader(const(char)[] name, const(char)[] value) { this.m_headers[m_headersLength++] = Header(name, value); }
+    void onHeader(const(char)[] name, const(char)[] value)
+    {
+        this.m_headers[m_headersLength].name = name;
+        this.m_headers[m_headersLength++].value = value;
+    }
     void onStatus(int status) { this.status = status; }
     void onStatusMsg(const(char)[] statusMsg) { this.statusMsg = statusMsg; }
 

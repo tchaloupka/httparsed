@@ -1,4 +1,4 @@
-CFLAGS += -Wall -Wextra -Werror -O3 -march=native -Wno-unused-parameter -Wno-unused-variable
+CFLAGS += -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-variable -O3 -march=native
 CC?=gcc
 
 all: picohttpparser.o http_parser.o llhttp.o
