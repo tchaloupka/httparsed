@@ -1,5 +1,8 @@
 name "httparsed"
+description "Fast betterC/nogc HTTP request/response parser"
+authors "Tomáš Chaloupka"
 targetType "library"
+license "public domain"
 
 configuration "default" {
 }
