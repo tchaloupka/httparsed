@@ -40,14 +40,14 @@ struct MsgParser(MSG)
         this.msg = MSG(args);
     }
 
-    auto parseRequest(T)(T buffer, ref uint lastPos)
+    int parseRequest(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
         static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(buffer.representation, lastPos);
         else return parse!parseRequestLine(buffer, lastPos);
     }
 
-    auto parseRequest(T)(T buffer)
+    int parseRequest(T)(T buffer)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
         uint lastPos;
@@ -55,14 +55,14 @@ struct MsgParser(MSG)
         else return parse!parseRequestLine(buffer, lastPos);
     }
 
-    auto parseResponse(T)(T buffer, ref uint lastPos)
+    int parseResponse(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
         static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(buffer.representation, lastPos);
         else return parse!parseStatusLine(buffer, lastPos);
     }
 
-    auto parseResponse(T)(T buffer)
+    int parseResponse(T)(T buffer)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
         uint lastPos;
