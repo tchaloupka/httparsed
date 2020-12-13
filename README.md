@@ -1,4 +1,8 @@
 # httparsed
+[![Actions Status](https://github.com/tchaloupka/httparsed/workflows/test/badge.svg)](https://github.com/tchaloupka/httparsed/actions)
+[![Latest version](https://img.shields.io/dub/v/during.svg)](https://code.dlang.org/packages/httparsed)
+[![Dub downloads](https://img.shields.io/dub/dt/during.svg)](http://code.dlang.org/packages/httparsed)
+[![license](https://img.shields.io/github/license/tchaloupka/httparsed.svg)](https://github.com/tchaloupka/httparsed/blob/master/LICENSE)
 
 Push parser of HTTP/1.x requests and responses.
 Other [internet message](https://tools.ietf.org/html/rfc5322) like protocols (ie [RTSP](https://tools.ietf.org/html/rfc7826)) are supported too.
