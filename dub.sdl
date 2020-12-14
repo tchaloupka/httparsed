@@ -3,10 +3,4 @@ description "Fast betterC/nogc HTTP request/response parser"
 authors "Tomáš Chaloupka"
 targetType "library"
 license "public domain"
-
-configuration "default" {
-}
-
-configuration "unittest" {
-    dflags "-mcpu=native" platform="ldc"
-}
+dflags "-mcpu=native" platform="ldc"
