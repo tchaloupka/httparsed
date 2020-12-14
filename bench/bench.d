@@ -35,9 +35,11 @@ void main()
         testHttparsed!NoopMsg,
         testPicoHttpParser,
         testHttpParser,
-        testLLHTTP
+        testLLHTTP,
+        testVibeD,
+        testArsd
     )(LOOPS)[].zip(
-        ["httparsed", "httparsed (noop)", "picohttp", "http_parser", "llhttp"]
+        ["httparsed", "httparsed (noop)", "picohttp", "http_parser", "llhttp", "vibe-d", "arsd"]
     )
     .array.sort!((a,b) => a[0] < b[0]);
 
@@ -136,6 +138,105 @@ void testLLHTTP()
     llhttp_init(&parser, llhttp_type.HTTP_REQUEST, &settings);
     immutable res = llhttp_execute(&parser, &data[0], data.length);
     enforce(res == llhttp_errno.HPE_OK, "Unexpected response: " ~ res.to!string);
+    enforce(reqNum == REQNUM, "Expected " ~ REQNUM.to!string ~ " requests parsed, but got: " ~ reqNum.to!string);
+}
+
+// stripped down version of https://github.com/vibe-d/vibe.d/blob/02011889fb72e334639c7773f5227dd31197b5fa/http/vibe/http/server.d#L2334
+void testVibeD()
+{
+    import std.string : indexOf;
+    import vibe.inet.message : InetHeaderMap, parseRFC5322Header;
+    import vibe.internal.allocator;
+    import vibe.internal.utilallocator: RegionListAllocator;
+    import vibe.stream.memory : createMemoryStream;
+    import vibe.stream.operations : readLine;
+
+    enum MaxHTTPHeaderLineLength = 4096;
+
+    scope alloc = new RegionListAllocator!(shared(Mallocator), false)(1024, Mallocator.instance);
+    auto stream = createMemoryStream(cast(ubyte[])requests);
+    uint reqNum;
+
+    string method;
+    string requestURI;
+    string httpVersion;
+    InetHeaderMap headers;
+
+    while (!stream.empty)
+    {
+        auto reqln = () @trusted { return cast(string)stream.readLine(MaxHTTPHeaderLineLength, "\r\n", alloc); }();
+
+        //Method
+        auto pos = reqln.indexOf(' ');
+        enforce(pos >= 0, "invalid request method");
+
+        method = reqln[0 .. pos];
+        reqln = reqln[pos+1 .. $];
+
+        //Path
+        pos = reqln.indexOf(' ');
+        enforce(pos >= 0, "invalid request path");
+
+        requestURI = reqln[0 .. pos];
+        reqln = reqln[pos+1 .. $];
+        httpVersion = reqln;
+
+        //headers
+        parseRFC5322Header(stream, headers, MaxHTTPHeaderLineLength, alloc, false);
+
+        reqNum++;
+        headers = InetHeaderMap.init;
+    }
+    enforce(reqNum == REQNUM, "Expected " ~ REQNUM.to!string ~ " requests parsed, but got: " ~ reqNum.to!string);
+}
+
+// stripped down version of https://github.com/adamdruppe/arsd/blob/402ea062b81197410b05df7f75c299e5e3eef0d8/cgi.d#L1737
+void testArsd()
+{
+    import al = std.algorithm;
+    import std.string;
+
+    const(char)[] requestMethod;
+    string requestUri;
+    string hdrName, hdrValue;
+    bool http10;
+
+    const(char)[] data = requests;
+    uint reqNum;
+    int headerNumber = 0;
+    foreach (line; al.splitter(data, "\r\n"))
+    {
+        if (line.length) {
+            headerNumber++;
+            auto header = cast(string) line.idup;
+            if (headerNumber == 1) {
+                // request line
+                auto parts = al.splitter(header, " ");
+                requestMethod = parts.front;
+                parts.popFront();
+                requestUri = parts.front;
+
+                if(header.indexOf("HTTP/1.0") != -1) {
+                    http10 = true;
+                }
+            }
+            else
+            {
+                // other header
+                auto colon = header.indexOf(":");
+                if(colon == -1)
+                    throw new Exception("HTTP headers should have a colon!");
+                hdrName = header[0..colon].toLower;
+                hdrValue = header[colon+2..$]; // skip the colon and the space
+            }
+            continue;
+        }
+
+        // message header completed
+        ++reqNum;
+        headerNumber = 0;
+    }
+    --reqNum; // last empty line
     enforce(reqNum == REQNUM, "Expected " ~ REQNUM.to!string ~ " requests parsed, but got: " ~ reqNum.to!string);
 }
 
