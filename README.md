@@ -94,5 +94,7 @@ dflags "-mcpu=native" platform="ldc"
   * [picohttpparser](https://github.com/h2o/picohttpparser)
   * [http_parser](https://github.com/nodejs/http-parser)
   * [llhttp](https://github.com/nodejs/llhttp) - replacement of [http_parser](https://github.com/nodejs/http-parser)
+  * [vibe-d](https://github.com/vibe-d/vibe.d/blob/02011889fb72e334639c7773f5227dd31197b5fa/http/vibe/http/server.d#L2334) - stripped down version of HTTP request parser used in vibe-d
+  * [arsd](https://github.com/adamdruppe/arsd/blob/402ea062b81197410b05df7f75c299e5e3eef0d8/cgi.d#L1737) - stripped down HTTP request parser of arsd's `cgi.d` package
 
-![results](https://i.imgur.com/q7x4RUX.png)
+![results](https://i.imgur.com/iRCDGVo.png)
