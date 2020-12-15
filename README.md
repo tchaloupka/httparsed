@@ -2,6 +2,7 @@
 [![Actions Status](https://github.com/tchaloupka/httparsed/workflows/D/badge.svg)](https://github.com/tchaloupka/httparsed/actions)
 [![Latest version](https://img.shields.io/dub/v/httparsed.svg)](https://code.dlang.org/packages/httparsed)
 [![Dub downloads](https://img.shields.io/dub/dt/httparsed.svg)](http://code.dlang.org/packages/httparsed)
+[![codecov](https://codecov.io/gh/tchaloupka/httparsed/branch/master/graph/badge.svg)](https://codecov.io/gh/tchaloupka/httparsed)
 [![license](https://img.shields.io/github/license/tchaloupka/httparsed.svg)](https://github.com/tchaloupka/httparsed/blob/master/LICENSE)
 
 Push parser of HTTP/1.x requests and responses.
