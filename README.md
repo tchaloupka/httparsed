@@ -62,15 +62,16 @@ auto reqParser = initParser!Msg(); // or `MsgParser!MSG reqParser;`
 auto resParser = initParser!Msg(); // or `MsgParser!MSG resParser;`
 
 // parse request
-string data = "GET /foo HTTP/1.1\r\nHost: 127.0.0.1:8090\r\n";
+string data = "GET /foo HTTP/1.1\r\nHost: 127.0.0.1:8090\r\n\r\n";
+// returns parsed message header length when parsed sucessfully, -ParserError on error
 int res = reqParser.parseRequest(data);
-assert(res == data.length); // returns parsed message header length when parsed sucessfully, 0 when there is no error, but message isn't complete yet, -errcode on error
+assert(res == data.length);
 
 // parse response
 data = "HTTP/1.0 200 OK\r\n";
 uint lastPos; // store last parsed position for next run
 res = resParser.parseResponse(data, lastPos);
-assert(res == 0); // no complete message header yet, but no error
+assert(res == -ParserError.partial); // no complete message header yet
 data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nfoo";
 res = resParser.parseResponse(data, lastPos); // starts parsing from previous position
 assert(res == data.length - 3); // whole message header parsed, body left to be handled based on actual header values

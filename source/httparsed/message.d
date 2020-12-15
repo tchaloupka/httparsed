@@ -41,6 +41,18 @@ struct MsgParser(MSG)
         this.msg = MSG(args);
     }
 
+    /**
+     *  Parses message request (request line + headers).
+     *
+     *  Params:
+     *    - buffer = buffer to parse message from
+     *    - lastPos = optional argument to store / pass previous position to which message was
+     *                already parsed (speeds up parsing when message comes in parts)
+     *
+     *  Returns:
+     *    * parsed message header length when parsed sucessfully
+     *    * `-ParserError.partial` on error (ie. -1 when message header is not comlete yet)
+     */
     int parseRequest(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
@@ -48,6 +60,7 @@ struct MsgParser(MSG)
         else return parse!parseRequestLine(buffer, lastPos);
     }
 
+    /// ditto
     int parseRequest(T)(T buffer)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
@@ -56,6 +69,18 @@ struct MsgParser(MSG)
         else return parse!parseRequestLine(buffer, lastPos);
     }
 
+    /**
+     *  Parses message response (status line + headers).
+     *
+     *  Params:
+     *    - buffer = buffer to parse message from
+     *    - lastPos = optional argument to store / pass previous position to which message was
+     *                already parsed (speeds up parsing when message comes in parts)
+     *
+     *  Returns:
+     *    * parsed message header length when parsed sucessfully
+     *    * `-ParserError.partial` on error (ie. -1 when message header is not comlete yet)
+     */
     int parseResponse(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
@@ -63,6 +88,7 @@ struct MsgParser(MSG)
         else return parse!parseStatusLine(buffer, lastPos);
     }
 
+    /// ditto
     int parseResponse(T)(T buffer)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
@@ -71,6 +97,7 @@ struct MsgParser(MSG)
         else return parse!parseStatusLine(buffer, lastPos);
     }
 
+    /// Gets provided structure used during parsing
     ref MSG msg() return { return m_msg; }
 
 private:
@@ -433,7 +460,32 @@ private:
     }
 }
 
-private int err(ParserError e) pure { pragma(inline, true); return -(cast(int)e); }
+///
+unittest
+{
+    // init parser
+    auto reqParser = initParser!Msg(); // or `MsgParser!MSG reqParser;`
+    auto resParser = initParser!Msg(); // or `MsgParser!MSG resParser;`
+
+    // parse request
+    string data = "GET /foo HTTP/1.1\r\nHost: 127.0.0.1:8090\r\n\r\n";
+    // returns parsed message header length when parsed sucessfully, -ParserError on error
+    int res = reqParser.parseRequest(data);
+    assert(res == data.length);
+
+    // parse response
+    data = "HTTP/1.0 200 OK\r\n";
+    uint lastPos; // store last parsed position for next run
+    res = resParser.parseResponse(data, lastPos);
+    assert(res == -ParserError.partial); // no complete message header yet
+    data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nfoo";
+    res = resParser.parseResponse(data, lastPos); // starts parsing from previous position
+    assert(res == data.length - 3); // whole message header parsed, body left to be handled based on actual header values
+}
+
+private:
+
+int err(ParserError e) pure { pragma(inline, true); return -(cast(int)e); }
 
 /// Builds valid char map from the provided ranges of invalid ones
 bool[256] buildValidCharMap()(string invalidRanges)
@@ -465,20 +517,21 @@ unittest
 
 version (unittest)
 {
+    // define our message content handler
     struct Header
     {
         const(char)[] name;
         const(char)[] value;
     }
 
+    // Just store slices of parsed message header
     struct Msg
     {
-        nothrow @nogc:
+        @safe pure nothrow @nogc:
         void onMethod(const(char)[] method) { this.method = method; }
         void onUri(const(char)[] uri) { this.uri = uri; }
         void onVersion(const(char)[] ver) { this.ver = ver; }
-        void onHeader(const(char)[] name, const(char)[] value)
-        {
+        void onHeader(const(char)[] name, const(char)[] value) {
             this.m_headers[m_headersLength].name = name;
             this.m_headers[m_headersLength++].value = value;
         }
@@ -492,7 +545,7 @@ version (unittest)
         const(char)[] statusMsg;
 
         private {
-            Header[10] m_headers;
+            Header[32] m_headers;
             size_t m_headersLength;
         }
 
