@@ -364,10 +364,12 @@ private:
 
         static if (LDC_with_SSE42)
         {
-            static byte[16] padRanges(string ranges)
+            // CT function to prepare input for SIMD vector enum
+            static byte[16] padRanges()(string ranges)
             {
                 byte[16] res;
-                res[0..ranges.length] = cast(byte[])ranges[];
+                // res[0..ranges.length] = cast(byte[])ranges[]; - broken on macOS betterC tests
+                foreach (i, c; ranges) res[i] = cast(byte)c;
                 return res;
             }
 
