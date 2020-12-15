@@ -98,6 +98,8 @@ struct MsgParser(MSG)
     /// Gets provided structure used during parsing
     ref MSG msg() return { return m_msg; }
 
+    alias msg this;
+
 private:
 
     // character map of valid characters for token, forbidden:
@@ -478,6 +480,12 @@ unittest
     // returns parsed message header length when parsed sucessfully, -ParserError on error
     int res = reqParser.parseRequest(data);
     assert(res == data.length);
+    assert(reqParser.method == "GET");
+    assert(reqParser.uri == "/foo");
+    assert(reqParser.minorVer == 1); // HTTP/1.1
+    assert(reqParser.headers.length == 1);
+    assert(reqParser.headers[0].name == "Host");
+    assert(reqParser.headers[0].value == "127.0.0.1:8090");
 
     // parse response
     data = "HTTP/1.0 200 OK\r\n";
@@ -487,6 +495,44 @@ unittest
     data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nfoo";
     res = resParser.parseResponse(data, lastPos); // starts parsing from previous position
     assert(res == data.length - 3); // whole message header parsed, body left to be handled based on actual header values
+    assert(resParser.minorVer == 0); // HTTP/1.0
+    assert(resParser.status == 200);
+    assert(resParser.statusMsg == "OK");
+    assert(resParser.headers.length == 2);
+    assert(resParser.headers[0].name == "Content-Type");
+    assert(resParser.headers[0].value == "text/plain");
+    assert(resParser.headers[1].name == "Content-Length");
+    assert(resParser.headers[1].value == "3");
+}
+
+/**
+ * Parses HTTP version from a slice returned in `onVersion` callback.
+ *
+ * Returns: minor version (0 for HTTP/1.0 or 1 for HTTP/1.1) on success or
+ *          `-ParserError.invalidVersion` on error
+ */
+int parseHttpVersion(const(char)[] ver) pure
+{
+    if (_expect(ver.length != 8, false)) return err(ParserError.invalidVersion);
+
+    static foreach (i, c; "HTTP/1.")
+        if (_expect(ver[i] != c, false)) return err(ParserError.invalidVersion);
+
+    if (_expect(ver[7] < '0' || ver[7] > '9', false)) return err(ParserError.invalidVersion);
+    return ver[7] - '0';
+}
+
+@("parseHttpVersion")
+unittest
+{
+    assert(parseHttpVersion("FOO") < 0);
+    assert(parseHttpVersion("HTTP/1.") < 0);
+    assert(parseHttpVersion("HTTP/1.12") < 0);
+    assert(parseHttpVersion("HTTP/1.a") < 0);
+    assert(parseHttpVersion("HTTP/2.0") < 0);
+    assert(parseHttpVersion("HTTP/1.00") < 0);
+    assert(parseHttpVersion("HTTP/1.0") == 0);
+    assert(parseHttpVersion("HTTP/1.1") == 1);
 }
 
 version (UTMAIN)
@@ -557,7 +603,11 @@ version (unittest)
         @safe pure nothrow @nogc:
         void onMethod(const(char)[] method) { this.method = method; }
         void onUri(const(char)[] uri) { this.uri = uri; }
-        void onVersion(const(char)[] ver) { this.ver = ver; }
+        int onVersion(const(char)[] ver)
+        {
+            minorVer = parseHttpVersion(ver);
+            return minorVer >= 0 ? 0 : minorVer;
+        }
         void onHeader(const(char)[] name, const(char)[] value) {
             this.m_headers[m_headersLength].name = name;
             this.m_headers[m_headersLength++].value = value;
@@ -567,7 +617,7 @@ version (unittest)
 
         const(char)[] method;
         const(char)[] uri;
-        const(char)[] ver;
+        int minorVer;
         int status;
         const(char)[] statusMsg;
 
@@ -608,7 +658,7 @@ unittest
         assert(req.headers.length == 0);
         assert(req.method == "GET");
         assert(req.uri == "/");
-        assert(req.ver == "HTTP/1.0");
+        assert(req.minorVer == 0);
     }
 
     // parse headers
@@ -616,7 +666,7 @@ unittest
         auto req = parse("GET /hoge HTTP/1.1\r\nHost: example.com\r\nCookie: \r\n\r\n");
         assert(req.method == "GET");
         assert(req.uri == "/hoge");
-        assert(req.ver == "HTTP/1.1");
+        assert(req.minorVer == 1);
         assert(req.headers.length == 2);
         assert(req.headers[0] == Header("Host", "example.com"));
         assert(req.headers[1] == Header("Cookie", ""));
@@ -627,7 +677,7 @@ unittest
         auto req = parse("GET /hoge HTTP/1.1\r\nHost: example.com\r\nUser-Agent: \343\201\262\343/1.0\r\n\r\n");
         assert(req.method == "GET");
         assert(req.uri == "/hoge");
-        assert(req.ver == "HTTP/1.1");
+        assert(req.minorVer == 1);
         assert(req.headers.length == 2);
         assert(req.headers[0] == Header("Host", "example.com"));
         assert(req.headers[1] == Header("User-Agent", "\343\201\262\343/1.0"));
@@ -638,7 +688,7 @@ unittest
         auto req = parse("GET / HTTP/1.0\r\nfoo: \r\nfoo: b\r\n  \tc\r\n\r\n");
         assert(req.method == "GET");
         assert(req.uri == "/");
-        assert(req.ver == "HTTP/1.0");
+        assert(req.minorVer == 0);
         assert(req.headers.length == 3);
         assert(req.headers[0] == Header("foo", ""));
         assert(req.headers[1] == Header("foo", "b"));
@@ -656,10 +706,10 @@ unittest
     assert(parse("GET ", Test.partial).method == "GET");
     assert(parse("GET /", Test.partial).uri == null);
     assert(parse("GET / ", Test.partial).uri == "/");
-    assert(parse("GET / foo", Test.partial).ver == null);
-    assert(parse("GET / foo\r", Test.partial).ver == "foo");
-    assert(parse("GET / foo\r\n", Test.partial).ver == "foo");
-    parse("GET / foo\r\n\r", Test.partial);
+    assert(parse("GET / HTTP/1.1", Test.partial).minorVer == 0);
+    assert(parse("GET / HTTP/1.1\r", Test.partial).minorVer == 1);
+    assert(parse("GET / HTTP/1.1\r\n", Test.partial).minorVer == 1);
+    parse("GET / HTTP/1.0\r\n\r", Test.partial);
     parse("GET / HTTP/1.0\r\n\r\n", Test.complete);
     parse(" / HTTP/1.0\r\n\r\n", Test.err); // empty method
     parse("GET  HTTP/1.0\r\n\r\n", Test.err); // empty request target
@@ -681,7 +731,7 @@ unittest
         auto res = parse("GET /\xa0 HTTP/1.0\r\nh: c\xa2y\r\n\r\n");
         assert(res.method == "GET");
         assert(res.uri == "/\xa0");
-        assert(res.ver == "HTTP/1.0");
+        assert(res.minorVer == 0);
         assert(res.headers.length == 1);
         assert(res.headers[0] == Header("h", "c\xa2y"));
     }
@@ -695,14 +745,14 @@ unittest
     }
 
     // leave the body intact
-    parse("GET / RTSP/2.0\r\n\r\nfoo bar baz", Test.complete, "foo bar baz".length);
+    parse("GET / HTTP/1.0\r\n\r\nfoo bar baz", Test.complete, "foo bar baz".length);
 
     // realworld
     {
         auto req = parse("GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConnection: keep-alive\r\nCache-Control: max-age=0\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.56 Safari/537.17\r\nAccept-Encoding: gzip,deflate,sdch\r\nAccept-Language: en-US,en;q=0.8\r\nAccept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.3\r\nCookie: name=wookie\r\n\r\n");
         assert(req.method == "GET");
         assert(req.uri == "/cookies");
-        assert(req.ver == "HTTP/1.1");
+        assert(req.minorVer == 1);
         assert(req.headers[0] == Header("Host", "127.0.0.1:8090"));
         assert(req.headers[1] == Header("Connection", "keep-alive"));
         assert(req.headers[2] == Header("Cache-Control", "max-age=0"));
@@ -745,7 +795,7 @@ unittest
         auto res = parse("HTTP/1.0 200 OK\r\n\r\n");
         assert(res.headers.length == 0);
         assert(res.status == 200);
-        assert(res.ver == "HTTP/1.0");
+        assert(res.minorVer == 0);
         assert(res.statusMsg == "OK");
     }
 
@@ -755,7 +805,7 @@ unittest
     {
         auto res = parse("HTTP/1.1 200 OK\r\nHost: example.com\r\nCookie: \r\n\r\n");
         assert(res.headers.length == 2);
-        assert(res.ver == "HTTP/1.1");
+        assert(res.minorVer == 1);
         assert(res.status == 200);
         assert(res.statusMsg == "OK");
         assert(res.headers[0] == Header("Host", "example.com"));
@@ -766,7 +816,7 @@ unittest
     {
         auto res = parse("HTTP/1.0 200 OK\r\nfoo: \r\nfoo: b\r\n  \tc\r\n\r\n");
         assert(res.headers.length == 3);
-        assert(res.ver == "HTTP/1.0");
+        assert(res.minorVer == 0);
         assert(res.status == 200);
         assert(res.statusMsg == "OK");
         assert(res.headers[0] == Header("foo", ""));
@@ -778,15 +828,15 @@ unittest
     {
         auto res = parse("HTTP/1.0 500 Internal Server Error\r\n\r\n");
         assert(res.headers.length == 0);
-        assert(res.ver == "HTTP/1.0");
+        assert(res.minorVer == 0);
         assert(res.status == 500);
         assert(res.statusMsg == "Internal Server Error");
     }
 
     parse("H", Test.partial); // incomplete 1
     parse("HTTP/1.", Test.partial); // incomplete 2
-    assert(parse("HTTP/1.1", Test.partial).ver is null); // incomplete 3 - differs from picohttpparser as we don't parse exact version
-    assert(parse("HTTP/1.1 ", Test.partial).ver == "HTTP/1.1"); // incomplete 4
+    assert(parse("HTTP/1.1", Test.partial).minorVer == 0); // incomplete 3 - differs from picohttpparser as we don't parse exact version
+    assert(parse("HTTP/1.1 ", Test.partial).minorVer == 1); // incomplete 4
     parse("HTTP/1.1 2", Test.partial); // incomplete 5
     assert(parse("HTTP/1.1 200", Test.partial).status == 0); // incomplete 6
     assert(parse("HTTP/1.1 200 ", Test.partial).status == 200); // incomplete 7
@@ -813,8 +863,8 @@ unittest
         assert(parser.parseResponse("HTTP/1.0 200 OK\r\n\r\nblabla") == "HTTP/1.0 200 OK\r\n\r\n".length);
     }
 
-    parse("HTTP/1. 200 OK\r\n\r\n"); // invalid http version - but we don't check that here
-    parse("HTTP/1.2z 200 OK\r\n\r\n"); // invalid http version 2 - but we don't check that here
+    parse("HTTP/1. 200 OK\r\n\r\n", Test.err); // invalid http version
+    parse("HTTP/1.2z 200 OK\r\n\r\n", Test.err); // invalid http version 2
     parse("HTTP/1.1  OK\r\n\r\n", Test.err); // no status code
 
     assert(parse("HTTP/1.1 200\r\n\r\n").statusMsg == ""); // accept missing trailing whitespace in status-line
@@ -823,31 +873,6 @@ unittest
     parse("HTTP/1.1 200X OK\r\n\r\n", Test.err); // garbage after status 3
 
     assert(parse("HTTP/1.1 200 OK\r\nbar: \t b\t \t\r\n\r\n").headers[0].value == "b"); // exclude leading and trailing spaces in header value
-}
-
-@("With HTTP version validation")
-unittest
-{
-    static struct HTTPMsg
-    {
-        nothrow @nogc:
-        int onVersion(const(char)[] ver)
-        {
-            if (ver != "HTTP/1.0" && ver != "HTTP/1.1") return err(ParserError.invalidVersion);
-            this.ver = ver;
-            return 0;
-        }
-        const(char)[] ver;
-    }
-
-    auto parser = initParser!HTTPMsg();
-    auto res = parser.parseResponse("HTTP/1.0 200 OK\r\n\r\n");
-    assert(res);
-    assert(res != -ParserError.partial);
-
-    parser = initParser!HTTPMsg();
-    res = parser.parseResponse("HTTP/3.0 200 OK\r\n\r\n");
-    assert(res == -ParserError.invalidVersion);
 }
 
 @("Incremental")
@@ -860,7 +885,7 @@ unittest
     assert(res == -ParserError.partial);
     assert(parser.msg.method == "GET");
     assert(parser.msg.uri == "/cookies");
-    assert(parser.msg.ver == "HTTP/1.1");
+    assert(parser.msg.minorVer == 1);
     assert(parser.msg.headers.length == 1);
     assert(parser.msg.headers[0] == Header("Host", "127.0.0.1:8090"));
 
@@ -868,7 +893,7 @@ unittest
     assert(res == req.length);
     assert(parser.msg.method == "GET");
     assert(parser.msg.uri == "/cookies");
-    assert(parser.msg.ver == "HTTP/1.1");
+    assert(parser.msg.minorVer == 1);
     assert(parser.msg.headers[0] == Header("Host", "127.0.0.1:8090"));
     assert(parser.msg.headers[1] == Header("Connection", "keep-alive"));
     assert(parser.msg.headers[2] == Header("Cache-Control", "max-age=0"));

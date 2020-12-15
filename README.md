@@ -35,7 +35,11 @@ struct Msg
     @safe pure nothrow @nogc:
     void onMethod(const(char)[] method) { this.method = method; }
     void onUri(const(char)[] uri) { this.uri = uri; }
-    void onVersion(const(char)[] ver) { this.ver = ver; }
+    int onVersion(const(char)[] ver)
+    {
+        minorVer = parseHttpVersion(ver);
+        return minorVer >= 0 ? 0 : minorVer;
+    }
     void onHeader(const(char)[] name, const(char)[] value) {
         this.m_headers[m_headersLength].name = name;
         this.m_headers[m_headersLength++].value = value;
@@ -45,7 +49,7 @@ struct Msg
 
     const(char)[] method;
     const(char)[] uri;
-    const(char)[] ver;
+    int minorVer;
     int status;
     const(char)[] statusMsg;
 
@@ -66,6 +70,12 @@ string data = "GET /foo HTTP/1.1\r\nHost: 127.0.0.1:8090\r\n\r\n";
 // returns parsed message header length when parsed sucessfully, -ParserError on error
 int res = reqParser.parseRequest(data);
 assert(res == data.length);
+assert(reqParser.method == "GET");
+assert(reqParser.uri == "/foo");
+assert(reqParser.minorVer == 1); // HTTP/1.1
+assert(reqParser.headers.length == 1);
+assert(reqParser.headers[0].name == "Host");
+assert(reqParser.headers[0].value == "127.0.0.1:8090");
 
 // parse response
 data = "HTTP/1.0 200 OK\r\n";
@@ -75,6 +85,14 @@ assert(res == -ParserError.partial); // no complete message header yet
 data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nfoo";
 res = resParser.parseResponse(data, lastPos); // starts parsing from previous position
 assert(res == data.length - 3); // whole message header parsed, body left to be handled based on actual header values
+assert(resParser.minorVer == 0); // HTTP/1.0
+assert(resParser.status == 200);
+assert(resParser.statusMsg == "OK");
+assert(resParser.headers.length == 2);
+assert(resParser.headers[0].name == "Content-Type");
+assert(resParser.headers[0].value == "text/plain");
+assert(resParser.headers[1].name == "Content-Length");
+assert(resParser.headers[1].value == "3");
 ```
 
 ### SSE4.2
