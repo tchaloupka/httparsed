@@ -4,6 +4,9 @@ authors "Tomáš Chaloupka"
 targetType "library"
 license "public domain"
 
+configuration "default" {
+}
+
 configuration "unittest" {
     dflags "-mcpu=native" platform="ldc"
 }

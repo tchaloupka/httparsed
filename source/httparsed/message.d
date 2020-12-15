@@ -4,7 +4,6 @@
 module httparsed.message;
 
 import httparsed.intrinsics;
-import std.format : format;
 
 nothrow @safe @nogc:
 
@@ -34,7 +33,6 @@ auto initParser(MSG, Args...)(Args args) { return MsgParser!MSG(args); }
 struct MsgParser(MSG)
 {
     import std.traits : ForeachType, isArray, Unqual;
-    import std.string : representation;
 
     this(Args...)(Args args)
     {
@@ -56,7 +54,7 @@ struct MsgParser(MSG)
     int parseRequest(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
-        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(buffer.representation, lastPos);
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(cast(const(ubyte)[])buffer, lastPos);
         else return parse!parseRequestLine(buffer, lastPos);
     }
 
@@ -65,7 +63,7 @@ struct MsgParser(MSG)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
         uint lastPos;
-        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(buffer.representation, lastPos);
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseRequestLine(cast(const(ubyte)[])buffer, lastPos);
         else return parse!parseRequestLine(buffer, lastPos);
     }
 
@@ -84,7 +82,7 @@ struct MsgParser(MSG)
     int parseResponse(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
-        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(buffer.representation, lastPos);
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(cast(const(ubyte)[])buffer, lastPos);
         else return parse!parseStatusLine(buffer, lastPos);
     }
 
@@ -93,7 +91,7 @@ struct MsgParser(MSG)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
     {
         uint lastPos;
-        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(buffer.representation, lastPos);
+        static if (is(Unqual!(ForeachType!T) == char)) return parse!parseStatusLine(cast(const(ubyte)[])buffer, lastPos);
         else return parse!parseStatusLine(buffer, lastPos);
     }
 
@@ -366,14 +364,19 @@ private:
 
         static if (LDC_with_SSE42)
         {
+            static byte[16] padRanges(string ranges)
+            {
+                byte[16] res;
+                res[0..ranges.length] = cast(byte[])ranges[];
+                return res;
+            }
+
             static if (sseRanges) alias usedRng = sseRanges;
             else alias usedRng = ranges;
             static assert(usedRng.length <= 16, "Ranges must be at most 16 characters long");
             static assert(usedRng.length % 2 == 0, "Ranges must have even number of characters");
             enum rangesSize = usedRng.length;
-
-            // hacky way to set byte16 enum
-            mixin("enum byte16 rngE = cast(byte[])" ~ format!`[%(%d,%)];`(cast(immutable(ubyte)[])(usedRng)));
+            enum byte16 rngE = padRanges(usedRng);
 
             if (_expect(buffer.length - i >= 16, true))
             {
@@ -450,17 +453,18 @@ private:
     // skips over spaces in the buffer
     template skipSpaces(ParserError err)
     {
-        enum skipSpaces = format!(q{
+        enum skipSpaces = `
             do {
                 ++i;
                 if (_expect(buffer.length == i, false)) return err(ParserError.partial);
-                if (_expect(buffer[i] == '\r' || buffer[i] == '\n', false)) return err(ParserError.%s);
+                if (_expect(buffer[i] == '\r' || buffer[i] == '\n', false)) return err(` ~ err.stringof ~ `);
             } while (buffer[i] == ' ');
-        })(err);
+        `;
     }
 }
 
 ///
+@("example")
 unittest
 {
     // init parser
@@ -483,6 +487,26 @@ unittest
     assert(res == data.length - 3); // whole message header parsed, body left to be handled based on actual header values
 }
 
+version (UTMAIN)
+{
+    // workaround for dub not supporting unittests with betterC
+    version (D_BetterC)
+    {
+        extern(C) void main() {
+            import core.stdc.stdio;
+            static foreach(u; __traits(getUnitTests, httparsed.message)) {
+                debug printf("testing '" ~ __traits(getAttributes, u)[0] ~ "'\n");
+                u();
+            }
+            debug printf("All unit tests have been run successfully.\n");
+        }
+    }
+    else
+    {
+        void main() {} // tests are run automagically
+    }
+}
+
 private:
 
 int err(ParserError e) pure { pragma(inline, true); return -(cast(int)e); }
@@ -499,6 +523,7 @@ bool[256] buildValidCharMap()(string invalidRanges)
     return res;
 }
 
+@("buildValidCharMap")
 unittest
 {
     string ranges = "\0 \"\"(),,//:@[]{{}}\x7f\xff";
@@ -553,12 +578,6 @@ version (unittest)
     }
 
     enum Test { err, complete, partial }
-
-    void writeln(Args...)(Args args)
-    {
-        import std.stdio : w = writeln;
-        try debug w(args); catch (Exception ex){}
-    }
 }
 
 // Tests from https://github.com/h2o/picohttpparser/blob/master/test.c

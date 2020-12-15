@@ -46,3 +46,5 @@ else
         return val;
     }
 }
+
+pragma(msg, "SSE: ", LDC_with_SSE42);
