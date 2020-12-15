@@ -9,7 +9,7 @@ import std.format : format;
 nothrow @safe @nogc:
 
 /// Parser error codes
-enum Error : int
+enum ParserError : int
 {
     partial = 1,    /// not enough data to parse message
     newLine,        /// invalid character in new line
@@ -21,6 +21,7 @@ enum Error : int
     noVersion,      /// no version in request line / response status line
     noUri,          /// no URI in request line
     noStatus,       /// no status code or text in status line
+    invalidMethod,  /// invalid method in request line
     invalidVersion, /// invalid version for the protocol message
 }
 
@@ -91,13 +92,13 @@ private:
 
         if (_expect(!lastPos, true))
         {
-            if (_expect(!buffer.length, false)) return err(Error.partial);
+            if (_expect(!buffer.length, false)) return err(ParserError.partial);
 
             // skip first empty line (some clients add CRLF after POST content)
             if (_expect(buffer[0] == '\r', false))
             {
-                if (_expect(buffer.length == 1, false)) return err(Error.partial);
-                if (_expect(buffer[1] != '\n', false)) return err(Error.newLine);
+                if (_expect(buffer.length == 1, false)) return err(ParserError.partial);
+                if (_expect(buffer[1] != '\n', false)) return err(ParserError.newLine);
                 lastPos += 2;
                 buffer = buffer[lastPos..$];
             }
@@ -126,11 +127,11 @@ private:
         while (true)
         {
             // check for msg headers end
-            if (_expect(buffer.length == 0, false)) return err(Error.partial);
+            if (_expect(buffer.length == 0, false)) return err(ParserError.partial);
             if (buffer[0] == '\r')
             {
-                if (_expect(buffer.length == 1, false)) return err(Error.partial);
-                if (_expect(buffer[1] != '\n', false)) return err(Error.newLine);
+                if (_expect(buffer.length == 1, false)) return err(ParserError.partial);
+                if (_expect(buffer[1] != '\n', false)) return err(ParserError.newLine);
 
                 buffer = buffer[2..$];
                 return 0;
@@ -145,14 +146,14 @@ private:
             {
                 auto ret = parseToken!(tokenRanges, ':', tokenSSERanges)(buffer, i);
                 if (_expect(ret < 0, false)) return ret;
-                if (_expect(start == i, false)) return err(Error.noHeaderName);
+                if (_expect(start == i, false)) return err(ParserError.noHeaderName);
                 name = buffer[start..i]; // store header name
                 i++; // move index after colon
 
                 // skip over SP and HT
                 for (;; ++i)
                 {
-                    if (_expect(i == buffer.length, false)) return err(Error.partial);
+                    if (_expect(i == buffer.length, false)) return err(ParserError.partial);
                     if (buffer[i] != ' ' && buffer[i] != '\t') break;
                 }
                 start = i;
@@ -199,7 +200,7 @@ private:
         // METHOD
         auto ret = parseToken!(tokenRanges, ' ', tokenSSERanges)(buffer, i);
         if (_expect(ret < 0, false)) return ret;
-        if (_expect(start == i, false)) return err(Error.noMethod);
+        if (_expect(start == i, false)) return err(ParserError.noMethod);
 
         static if (__traits(hasMember, m_msg, "onMethod"))
         {
@@ -210,7 +211,7 @@ private:
                 if (_expect(r < 0, false)) return r;
             }
         }
-        mixin(skipSpaces!(Error.noUri));
+        mixin(skipSpaces!(ParserError.noUri));
         start = i;
 
         // PATH
@@ -225,7 +226,7 @@ private:
                 if (_expect(ur < 0, false)) return ur;
             }
         }
-        mixin(skipSpaces!(Error.noVersion));
+        mixin(skipSpaces!(ParserError.noVersion));
         start = i;
 
         // VERSION
@@ -254,7 +255,7 @@ private:
         // VERSION
         auto ret = parseToken!(versionRanges, ' ')(buffer, i);
         if (_expect(ret < 0, false)) return ret;
-        if (_expect(start == i, false)) return err(Error.noVersion);
+        if (_expect(start == i, false)) return err(ParserError.noVersion);
         static if (__traits(hasMember, m_msg, "onVersion"))
         {
             static if (is(typeof(m_msg.onVersion("")) == void))
@@ -264,17 +265,17 @@ private:
                 if (_expect(r < 0, false)) return r;
             }
         }
-        mixin(skipSpaces!(Error.noStatus));
+        mixin(skipSpaces!(ParserError.noStatus));
         start = i;
 
         // STATUS CODE
         if (_expect(i+3 >= buffer.length, false))
-            return err(Error.partial); // not enough data - we want at least [:digit:][:digit:][:digit:]<other char> to try to parse
+            return err(ParserError.partial); // not enough data - we want at least [:digit:][:digit:][:digit:]<other char> to try to parse
 
         int code;
         foreach (j, m; [100, 10, 1])
         {
-            if (buffer[i+j] < '0' || buffer[i+j] > '9') return err(Error.status);
+            if (buffer[i+j] < '0' || buffer[i+j] > '9') return err(ParserError.status);
             code += (buffer[start+j] - '0') * m;
         }
         i += 3;
@@ -288,9 +289,9 @@ private:
             }
         }
         if (_expect(i == buffer.length, false))
-            return err(Error.partial);
+            return err(ParserError.partial);
         if (_expect(buffer[i] != ' ' && buffer[i] != '\r' && buffer[i] != '\n', false))
-            return err(Error.status); // Garbage after status
+            return err(ParserError.status); // Garbage after status
 
         start = i;
 
@@ -386,7 +387,7 @@ private:
         }
 
         // handle the rest
-        if (_expect(i >= buffer.length, false)) return err(Error.partial);
+        if (_expect(i >= buffer.length, false)) return err(ParserError.partial);
 
         FOUND:
         while (true)
@@ -401,8 +402,8 @@ private:
                     if (buffer[i] == c) return 0;
                 }
             }
-            if (_expect(!charMap[buffer[i]], false)) return err(Error.token);
-            if (_expect(++i == buffer.length, false)) return err(Error.partial);
+            if (_expect(!charMap[buffer[i]], false)) return err(ParserError.token);
+            if (_expect(++i == buffer.length, false)) return err(ParserError.partial);
         }
     }
 
@@ -411,8 +412,8 @@ private:
             assert(i < buffer.length);
             if (_expect(buffer[i] == '\r', true))
             {
-                if (_expect(i+1 == buffer.length, false)) return err(Error.partial);
-                if (_expect(buffer[i+1] != '\n', false)) return err(Error.newLine);
+                if (_expect(i+1 == buffer.length, false)) return err(ParserError.partial);
+                if (_expect(buffer[i+1] != '\n', false)) return err(ParserError.newLine);
                 i += 2;
             }
             else if (buffer[i] == '\n') ++i;
@@ -420,19 +421,19 @@ private:
         };
 
     // skips over spaces in the buffer
-    template skipSpaces(Error err)
+    template skipSpaces(ParserError err)
     {
         enum skipSpaces = format!(q{
             do {
                 ++i;
-                if (_expect(buffer.length == i, false)) return err(Error.partial);
-                if (_expect(buffer[i] == '\r' || buffer[i] == '\n', false)) return err(Error.%s);
+                if (_expect(buffer.length == i, false)) return err(ParserError.partial);
+                if (_expect(buffer[i] == '\r' || buffer[i] == '\n', false)) return err(ParserError.%s);
             } while (buffer[i] == ' ');
         })(err);
     }
 }
 
-private int err(Error e) pure { pragma(inline, true); return -(cast(int)e); }
+private int err(ParserError e) pure { pragma(inline, true); return -(cast(int)e); }
 
 /// Builds valid char map from the provided ranges of invalid ones
 bool[256] buildValidCharMap()(string invalidRanges)
@@ -516,11 +517,11 @@ unittest
     {
         auto parser = initParser!Msg();
         auto res = parser.parseRequest(data);
-        // if (res < 0) writeln("Err: ", cast(Error)(-res));
+        // if (res < 0) writeln("Err: ", cast(ParserError)(-res));
         final switch (test)
         {
-            case Test.err: assert(res < -Error.partial); break;
-            case Test.partial: assert(res == -Error.partial); break;
+            case Test.err: assert(res < -ParserError.partial); break;
+            case Test.partial: assert(res == -ParserError.partial); break;
             case Test.complete: assert(res == data.length - additional); break;
         }
 
@@ -654,11 +655,11 @@ unittest
         auto parser = initParser!Msg();
 
         auto res = parser.parseResponse(data);
-        // if (res < 0) writeln("Err: ", cast(Error)(-res));
+        // if (res < 0) writeln("Err: ", cast(ParserError)(-res));
         final switch (test)
         {
-            case Test.err: assert(res < -Error.partial); break;
-            case Test.partial: assert(res == -Error.partial); break;
+            case Test.err: assert(res < -ParserError.partial); break;
+            case Test.partial: assert(res == -ParserError.partial); break;
             case Test.complete: assert(res == data.length - additional); break;
         }
 
@@ -733,8 +734,8 @@ unittest
     // slowloris (incomplete)
     {
         auto parser = initParser!Msg();
-        assert(parser.parseResponse("HTTP/1.0 200 OK\r\n") == -Error.partial);
-        assert(parser.parseResponse("HTTP/1.0 200 OK\r\n\r") == -Error.partial);
+        assert(parser.parseResponse("HTTP/1.0 200 OK\r\n") == -ParserError.partial);
+        assert(parser.parseResponse("HTTP/1.0 200 OK\r\n\r") == -ParserError.partial);
         assert(parser.parseResponse("HTTP/1.0 200 OK\r\n\r\nblabla") == "HTTP/1.0 200 OK\r\n\r\n".length);
     }
 
@@ -758,7 +759,7 @@ unittest
         nothrow @nogc:
         int onVersion(const(char)[] ver)
         {
-            if (ver != "HTTP/1.0" && ver != "HTTP/1.1") return err(Error.invalidVersion);
+            if (ver != "HTTP/1.0" && ver != "HTTP/1.1") return err(ParserError.invalidVersion);
             this.ver = ver;
             return 0;
         }
@@ -768,11 +769,11 @@ unittest
     auto parser = initParser!HTTPMsg();
     auto res = parser.parseResponse("HTTP/1.0 200 OK\r\n\r\n");
     assert(res);
-    assert(res != -Error.partial);
+    assert(res != -ParserError.partial);
 
     parser = initParser!HTTPMsg();
     res = parser.parseResponse("HTTP/3.0 200 OK\r\n\r\n");
-    assert(res == -Error.invalidVersion);
+    assert(res == -ParserError.invalidVersion);
 }
 
 @("Incremental")
@@ -782,7 +783,7 @@ unittest
     auto parser = initParser!Msg();
     uint parsed;
     auto res = parser.parseRequest(req[0.."GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nConn".length], parsed);
-    assert(res == -Error.partial);
+    assert(res == -ParserError.partial);
     assert(parser.msg.method == "GET");
     assert(parser.msg.uri == "/cookies");
     assert(parser.msg.ver == "HTTP/1.1");
