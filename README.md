@@ -96,6 +96,12 @@ assert(resParser.headers[1].name == "Content-Length");
 assert(resParser.headers[1].value == "3");
 ```
 
+### Adding library to your project
+
+To use this library just add `dependency "httparsed" version=">=1.1.0"` to your `dub.sdl` project configuration.
+
+Or just copypaste the whole file and use it directly.
+
 ### SSE4.2
 
 To use SSE4.2 use this in your `dub.sdl`:

@@ -5,7 +5,7 @@ import std.exception;
 import std.range;
 import std.stdio;
 
-import httparsed.message;
+import httparsed;
 import http_parser;
 import picohttpparser;
 import llhttp;

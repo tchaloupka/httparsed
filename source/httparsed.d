@@ -1,9 +1,7 @@
 /**
  *
  */
-module httparsed.message;
-
-import httparsed.intrinsics;
+module httparsed;
 
 nothrow @safe @nogc:
 
@@ -361,7 +359,10 @@ private:
      */
     int parseToken(string ranges, alias next, string sseRanges = null)(const(ubyte)[] buffer, ref size_t i) pure
     {
-        pragma(inline, true);
+        version (DigitalMars) {
+            static if (__VERSION__ >= 2094) pragma(inline, true); // older compilers can't inline this
+        } else pragma(inline, true);
+
         static immutable charMap = buildValidCharMap(ranges);
 
         static if (LDC_with_SSE42)
@@ -535,14 +536,14 @@ unittest
     assert(parseHttpVersion("HTTP/1.1") == 1);
 }
 
-version (UTMAIN)
+version (CI_MAIN)
 {
     // workaround for dub not supporting unittests with betterC
     version (D_BetterC)
     {
         extern(C) void main() {
             import core.stdc.stdio;
-            static foreach(u; __traits(getUnitTests, httparsed.message)) {
+            static foreach(u; __traits(getUnitTests, httparsed)) {
                 debug printf("testing '" ~ __traits(getAttributes, u)[0] ~ "'\n");
                 u();
             }
@@ -551,7 +552,27 @@ version (UTMAIN)
     }
     else
     {
-        void main() {} // tests are run automagically
+        void main()
+        {
+            version (unittest) {} // run automagically
+            else
+            {
+                import core.stdc.stdio;
+
+                // just a compilation test
+                auto reqParser = initParser!Msg();
+                auto resParser = initParser!Msg();
+
+                string data = "GET /foo HTTP/1.1\r\nHost: 127.0.0.1:8090\r\n\r\n";
+                int res = reqParser.parseRequest(data);
+                assert(res == data.length);
+
+                data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nfoo";
+                res = resParser.parseResponse(data);
+                assert(res == data.length - 3);
+                debug printf("Test app works\n");
+            }
+        }
     }
 }
 
@@ -588,7 +609,10 @@ unittest
         ]);
 }
 
-version (unittest)
+version (unittest) version = WITH_MSG;
+else version (CI_MAIN) version = WITH_MSG;
+
+version (WITH_MSG)
 {
     // define our message content handler
     struct Header
@@ -904,3 +928,54 @@ unittest
     assert(parser.msg.headers[7] == Header("Accept-Charset", "ISO-8859-1,utf-8;q=0.7,*;q=0.3"));
     assert(parser.msg.headers[8] == Header("Cookie", "name=wookie"));
 }
+
+//** used intrinsics **//
+
+version(LDC)
+{
+    public import core.simd;
+    public import ldc.intrinsics;
+    import ldc.gccbuiltins_x86;
+
+    enum LDC_with_SSE42 = __traits(targetHasFeature, "sse4.2");
+
+    // These specify the type of data that we're comparing.
+    enum _SIDD_UBYTE_OPS            = 0x00;
+    enum _SIDD_UWORD_OPS            = 0x01;
+    enum _SIDD_SBYTE_OPS            = 0x02;
+    enum _SIDD_SWORD_OPS            = 0x03;
+
+    // These specify the type of comparison operation.
+    enum _SIDD_CMP_EQUAL_ANY        = 0x00;
+    enum _SIDD_CMP_RANGES           = 0x04;
+    enum _SIDD_CMP_EQUAL_EACH       = 0x08;
+    enum _SIDD_CMP_EQUAL_ORDERED    = 0x0c;
+
+    // These are used in _mm_cmpXstri() to specify the return.
+    enum _SIDD_LEAST_SIGNIFICANT    = 0x00;
+    enum _SIDD_MOST_SIGNIFICANT     = 0x40;
+
+    // These macros are used in _mm_cmpXstri() to specify the return.
+    enum _SIDD_BIT_MASK             = 0x00;
+    enum _SIDD_UNIT_MASK            = 0x40;
+
+    // some definition aliases to commonly used names
+    alias __m128i = int4;
+
+    // some used methods aliases
+    alias _expect = llvm_expect;
+    alias _mm_loadu_si128 = loadUnaligned!__m128i;
+    alias _mm_cmpestri = __builtin_ia32_pcmpestri128;
+}
+else
+{
+    enum LDC_with_SSE42 = false;
+
+    T _expect(T)(T val, T expected_val) if (__traits(isIntegral, T))
+    {
+        pragma(inline, true);
+        return val;
+    }
+}
+
+pragma(msg, "SSE: ", LDC_with_SSE42);

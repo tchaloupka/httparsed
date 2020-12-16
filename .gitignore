@@ -1,6 +1,5 @@
 .dub
-*-test-*
-*unittest*
+*test*
 *.a
 *.o
 *.exe
