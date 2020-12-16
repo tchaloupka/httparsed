@@ -570,7 +570,7 @@ version (CI_MAIN)
                 data = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nfoo";
                 res = resParser.parseResponse(data);
                 assert(res == data.length - 3);
-                debug printf("Test app works\n");
+                () @trusted { printf("Test app works\n"); }();
             }
         }
     }
