@@ -363,7 +363,7 @@ private:
             static if (__VERSION__ >= 2094) pragma(inline, true); // older compilers can't inline this
         } else pragma(inline, true);
 
-        static immutable charMap = buildValidCharMap(ranges);
+        immutable charMap = parseTokenCharMap!(ranges)();
 
         static if (LDC_with_SSE42)
         {
@@ -607,6 +607,11 @@ unittest
             0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         ]);
+}
+
+immutable(bool[256]) parseTokenCharMap(string invalidRanges)() {
+    static immutable charMap = buildValidCharMap(invalidRanges);
+    return charMap;
 }
 
 version (unittest) version = WITH_MSG;
