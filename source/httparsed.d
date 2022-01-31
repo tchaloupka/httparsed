@@ -541,10 +541,14 @@ version (CI_MAIN)
     // workaround for dub not supporting unittests with betterC
     version (D_BetterC)
     {
-        extern(C) void main() {
+        extern(C) void main() @trusted {
             import core.stdc.stdio;
-            static foreach(u; __traits(getUnitTests, httparsed)) {
-                debug printf("testing '" ~ __traits(getAttributes, u)[0] ~ "'\n");
+            static foreach(u; __traits(getUnitTests, httparsed))
+            {
+                static if (__traits(getAttributes, u).length)
+                    printf("unittest %s:%d | '" ~ __traits(getAttributes, u)[0] ~ "'\n", __traits(getLocation, u)[0].ptr, __traits(getLocation, u)[1]);
+                else
+                    printf("unittest %s:%d\n", __traits(getLocation, u)[0].ptr, __traits(getLocation, u)[1]);
                 u();
             }
             debug printf("All unit tests have been run successfully.\n");
@@ -984,26 +988,3 @@ else
 }
 
 pragma(msg, "SSE: ", LDC_with_SSE42);
-
-// betterC test runner
-version (unittest)
-{
-    version (D_BetterC)
-    {
-        extern(C)
-        void main() @trusted
-        {
-            import core.stdc.stdio : printf;
-
-            static foreach(u; __traits(getUnitTests, httparsed))
-            {
-                static if (__traits(getAttributes, u).length)
-                    printf("unittest %s:%d | '" ~ __traits(getAttributes, u)[0] ~ "'\n", __traits(getLocation, u)[0].ptr, __traits(getLocation, u)[1]);
-                else
-                    printf("unittest %s:%d\n", __traits(getLocation, u)[0].ptr, __traits(getLocation, u)[1]);
-                u();
-            }
-            printf("All unit tests have been run successfully.\n");
-        }
-    }
-}
