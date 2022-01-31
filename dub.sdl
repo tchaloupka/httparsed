@@ -7,6 +7,16 @@ license "public domain"
 configuration "default" {
 }
 
+configuration "betterC" {
+    buildOptions "betterC"
+}
+
 configuration "unittest" {
     dflags "-mcpu=native" platform="ldc"
+}
+
+configuration "httparsed-test-betterC" {
+    targetType "executable"
+    targetName "httparsed-test-betterC"
+    buildOptions "betterC"
 }
