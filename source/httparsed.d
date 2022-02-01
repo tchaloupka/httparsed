@@ -47,7 +47,7 @@ struct MsgParser(MSG)
      *
      *  Returns:
      *    * parsed message header length when parsed sucessfully
-     *    * `-ParserError.partial` on error (ie. -1 when message header is not comlete yet)
+     *    * `-ParserError` on error (ie. -1 when message header is not complete yet)
      */
     int parseRequest(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
