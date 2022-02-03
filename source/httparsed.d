@@ -11,6 +11,7 @@ enum ParserError : int
     partial = 1,    /// not enough data to parse message
     newLine,        /// invalid character in new line
     headerName,     /// invalid character in header name
+    headerValue,    /// invalid header value
     status,         /// invalid character in response status
     token,          /// invalid character in token
     noHeaderName,   /// empty header name
