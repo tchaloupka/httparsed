@@ -1,8 +1,8 @@
 extern (C):
 
-enum LLHTTP_VERSION_MAJOR = 2;
-enum LLHTTP_VERSION_MINOR = 1;
-enum LLHTTP_VERSION_PATCH = 3;
+enum LLHTTP_VERSION_MAJOR = 6;
+enum LLHTTP_VERSION_MINOR = 0;
+enum LLHTTP_VERSION_PATCH = 5;
 
 enum LLHTTP_STRICT_MODE = 0;
 
@@ -24,10 +24,11 @@ struct llhttp__internal_s
     ubyte http_major;
     ubyte http_minor;
     ubyte header_state;
-    ushort flags;
+    ubyte lenient_flags;
     ubyte upgrade;
-    ushort status_code;
     ubyte finish;
+    ushort flags;
+    ushort status_code;
     void* settings;
 }
 
@@ -63,7 +64,8 @@ enum llhttp_errno
     HPE_CB_CHUNK_COMPLETE = 20,
     HPE_PAUSED = 21,
     HPE_PAUSED_UPGRADE = 22,
-    HPE_USER = 23
+    HPE_PAUSED_H2_UPGRADE = 23,
+    HPE_USER = 24
 }
 
 alias llhttp_errno_t = llhttp_errno;
@@ -78,11 +80,19 @@ enum llhttp_flags
     F_CONTENT_LENGTH = 0x20,
     F_SKIPBODY = 0x40,
     F_TRAILING = 0x80,
-    F_LENIENT = 0x100,
     F_TRANSFER_ENCODING = 0x200
 }
 
 alias llhttp_flags_t = llhttp_flags;
+
+enum llhttp_lenient_flags
+{
+    LENIENT_HEADERS = 0x1,
+    LENIENT_CHUNKED_LENGTH = 0x2,
+    LENIENT_KEEP_ALIVE = 0x4
+}
+
+alias llhttp_lenient_flags_t = llhttp_lenient_flags;
 
 enum llhttp_type
 {
@@ -138,7 +148,18 @@ enum llhttp_method
     HTTP_LINK = 31,
     HTTP_UNLINK = 32,
     HTTP_SOURCE = 33,
-    HTTP_PRI = 34
+    HTTP_PRI = 34,
+    HTTP_DESCRIBE = 35,
+    HTTP_ANNOUNCE = 36,
+    HTTP_SETUP = 37,
+    HTTP_PLAY = 38,
+    HTTP_PAUSE = 39,
+    HTTP_TEARDOWN = 40,
+    HTTP_GET_PARAMETER = 41,
+    HTTP_SET_PARAMETER = 42,
+    HTTP_REDIRECT = 43,
+    HTTP_RECORD = 44,
+    HTTP_FLUSH = 45
 }
 
 alias llhttp_method_t = llhttp_method;
@@ -158,6 +179,7 @@ struct llhttp_settings_s
     /* Possible return values 0, -1, `HPE_PAUSED` */
     llhttp_cb on_message_begin;
 
+    /* Possible return values 0, -1, HPE_USER */
     llhttp_data_cb on_url;
     llhttp_data_cb on_status;
     llhttp_data_cb on_header_field;
@@ -174,6 +196,7 @@ struct llhttp_settings_s
      */
     llhttp_cb on_headers_complete;
 
+    /* Possible return values 0, -1, HPE_USER */
     llhttp_data_cb on_body;
 
     /* Possible return values 0, -1, `HPE_PAUSED` */
@@ -185,13 +208,31 @@ struct llhttp_settings_s
      */
     llhttp_cb on_chunk_header;
     llhttp_cb on_chunk_complete;
+
+    /* Information-only callbacks, return value is ignored */
+    llhttp_cb on_url_complete;
+    llhttp_cb on_status_complete;
+    llhttp_cb on_header_field_complete;
+    llhttp_cb on_header_value_complete;
 }
 
-/* Initialize the parser with specific type and user settings */
+/* Initialize the parser with specific type and user settings.
+ *
+ * NOTE: lifetime of `settings` has to be at least the same as the lifetime of
+ * the `parser` here. In practice, `settings` has to be either a static
+ * variable or be allocated with `malloc`, `new`, etc.
+ */
 void llhttp_init (
     llhttp_t* parser,
     llhttp_type_t type,
     const(llhttp_settings_t)* settings);
+
+// defined(__wasm__)
+
+/* Reset an already initialized parser back to the start state, preserving the
+ * existing parser type, callback settings, user data, and lenient flags.
+ */
+void llhttp_reset (llhttp_t* parser);
 
 /* Initialize the settings object */
 void llhttp_settings_init (llhttp_settings_t* settings);
@@ -295,7 +336,32 @@ const(char)* llhttp_method_name (llhttp_method_t method);
  *
  * **(USE AT YOUR OWN RISK)**
  */
-void llhttp_set_lenient (llhttp_t* parser, int enabled);
+void llhttp_set_lenient_headers (llhttp_t* parser, int enabled);
+
+/* Enables/disables lenient handling of conflicting `Transfer-Encoding` and
+ * `Content-Length` headers (disabled by default).
+ *
+ * Normally `llhttp` would error when `Transfer-Encoding` is present in
+ * conjunction with `Content-Length`. This error is important to prevent HTTP
+ * request smuggling, but may be less desirable for small number of cases
+ * involving legacy servers.
+ *
+ * **(USE AT YOUR OWN RISK)**
+ */
+void llhttp_set_lenient_chunked_length (llhttp_t* parser, int enabled);
+
+/* Enables/disables lenient handling of `Connection: close` and HTTP/1.0
+ * requests responses.
+ *
+ * Normally `llhttp` would error on (in strict mode) or discard (in loose mode)
+ * the HTTP request/response after the request/response with `Connection: close`
+ * and `Content-Length`. This is important to prevent cache poisoning attacks,
+ * but might interact badly with outdated and insecure clients. With this flag
+ * the extra request/response will be parsed normally.
+ *
+ * **(USE AT YOUR OWN RISK)**
+ */
+void llhttp_set_lenient_keep_alive (llhttp_t* parser, int enabled);
 
 /* extern "C" */
 

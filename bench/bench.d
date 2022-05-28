@@ -6,7 +6,7 @@ import std.range;
 import std.stdio;
 
 import httparsed;
-import http_parser;
+import httpparser;
 import picohttpparser;
 import llhttp;
 
