@@ -113,6 +113,7 @@ dflags "-mcpu=native" platform="ldc"
 ## Performance
 
 * Tested on: `AMD Ryzen 7 3700X 8-Core Processor`
+* Compilers: ldc-1.29.0, gcc-12.1.1 20220507
 * Best of 5 runs for each parser
 * tested parsers:
   * httparsed (noop) - this parser but with a provided message context with no callbacks - it just parses through requests, but doesn't use anything
@@ -123,4 +124,4 @@ dflags "-mcpu=native" platform="ldc"
   * [vibe-d](https://github.com/vibe-d/vibe.d/blob/02011889fb72e334639c7773f5227dd31197b5fa/http/vibe/http/server.d#L2334) - stripped down version of HTTP request parser used in vibe-d
   * [arsd](https://github.com/adamdruppe/arsd/blob/402ea062b81197410b05df7f75c299e5e3eef0d8/cgi.d#L1737) - stripped down HTTP request parser of arsd's `cgi.d` package
 
-![results](https://i.imgur.com/iRCDGVo.png)
+![results](bench/results.png)
