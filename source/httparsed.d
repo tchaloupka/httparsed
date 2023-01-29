@@ -97,6 +97,9 @@ struct MsgParser(MSG)
     /// Gets provided structure used during parsing
     ref MSG msg() return { return m_msg; }
 
+    /// ditto
+    ref const(MSG) msg() const return { return cast(const(MSG))m_msg; }
+
     alias msg this;
 
 private:
