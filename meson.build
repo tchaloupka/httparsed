@@ -22,7 +22,7 @@ test_exe = executable(
     'httparsed-test',
     httparsed_src,
     include_directories: include_directories('source'),
-    d_args: ['-betterC', '-unittest', '-mcpu=native'],
+    d_args: ['-betterC', '-unittest'],
     d_module_versions: ['CI_MAIN'],
     link_args: ['-link-defaultlib-shared=false']
 )
