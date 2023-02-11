@@ -18,12 +18,17 @@ httparsed_dep = declare_dependency(
     link_with: httparsed_lib
 )
 
+bc_link_args = []
+if meson.get_compiler('d').get_id() == 'llvm'
+    bc_link_args += '-link-defaultlib-shared=false'
+endif
+
 test_exe = executable(
     'httparsed-test',
     httparsed_src,
     include_directories: include_directories('source'),
     d_args: ['-betterC', '-unittest'],
     d_module_versions: ['CI_MAIN'],
-    link_args: ['-link-defaultlib-shared=false']
+    link_args: bc_link_args
 )
 test('bctest', test_exe)
