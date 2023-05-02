@@ -15,8 +15,11 @@ jobs:
     name: Dub tests
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        os: [ubuntu-latest, windows-latest]
         dc: [dmd-latest, ldc-latest, dmd-2.094.2, ldc-1.24.0, dmd-2.091.1]
+        include:
+          - { os: macOS-latest, dc: dmd-latest, arch: x86_64 }
+          - { os: macOS-latest, dc: ldc-latest, arch: x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v3
