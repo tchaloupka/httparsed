@@ -47,7 +47,7 @@ struct MsgParser(MSG)
      *                already parsed (speeds up parsing when message comes in parts)
      *
      *  Returns:
-     *    * parsed message header length when parsed sucessfully
+     *    * parsed message header length when parsed successfully
      *    * `-ParserError` on error (ie. -1 when message header is not complete yet)
      */
     int parseRequest(T)(T buffer, ref uint lastPos)
@@ -75,8 +75,8 @@ struct MsgParser(MSG)
      *                already parsed (speeds up parsing when message comes in parts)
      *
      *  Returns:
-     *    * parsed message header length when parsed sucessfully
-     *    * `-ParserError.partial` on error (ie. -1 when message header is not comlete yet)
+     *    * parsed message header length when parsed successfully
+     *    * `-ParserError.partial` on error (ie. -1 when message header is not complete yet)
      */
     int parseResponse(T)(T buffer, ref uint lastPos)
         if (isArray!T && (is(Unqual!(ForeachType!T) == char) || is(Unqual!(ForeachType!T) == ubyte)))
@@ -482,7 +482,7 @@ unittest
 
     // parse request
     string data = "GET /foo HTTP/1.1\r\nHost: 127.0.0.1:8090\r\n\r\n";
-    // returns parsed message header length when parsed sucessfully, -ParserError on error
+    // returns parsed message header length when parsed successfully, -ParserError on error
     int res = reqParser.parseRequest(data);
     assert(res == data.length);
     assert(reqParser.method == "GET");
